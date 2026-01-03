@@ -1,5 +1,5 @@
 streamlit
-yfinance
 pandas
 plotly
-OpenBB
+openbb
+scikit-learn
