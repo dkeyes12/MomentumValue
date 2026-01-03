@@ -6,7 +6,7 @@ from plotly.subplots import make_subplots
 from datetime import datetime, timedelta
 
 # --- CONFIGURATION ---
-st.set_page_config(page_title="Stock Momentum Dashboard (YFinance)", layout="wide")
+st.set_page_config(page_title="Stock Momentum Dashboard", layout="wide")
 
 # --- SIDEBAR INPUTS ---
 st.sidebar.header("Configuration")
