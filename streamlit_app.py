@@ -1,12 +1,18 @@
 import streamlit as st
+import os
+
+# --- CRITICAL FIX: DISABLE OPENBB AUTO-BUILD ---
+# This prevents OpenBB from trying to write to the read-only file system
+os.environ["OPENBB_AUTO_BUILD"] = "false"
+
+# Now it is safe to import openbb
+from openbb import obb
+# -----------------------------------------------
+
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import datetime, timedelta
-
-# --- OPENBB v4 IMPORT ---
-# Ensure you have run: pip install openbb
-from openbb import obb
 
 # --- CONFIGURATION ---
 st.set_page_config(page_title="Stock Momentum Dashboard (OpenBB v4)", layout="wide")
