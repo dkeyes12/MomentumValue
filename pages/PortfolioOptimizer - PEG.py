@@ -7,7 +7,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 # --- CONFIGURATION ---
-st.set_page_config(page_title="PEG & Momentum Optimizer", layout="wide")
+st.set_page_config(page_title="Momentum Optimizer -- Using PEG", layout="wide")
 
 # --- INITIALIZE SESSION STATE ---
 if "opt_results" not in st.session_state:
