@@ -384,7 +384,7 @@ if st.session_state["market_data"] is not None:
 
     with st.expander("📊 Strategy Breakdown: Allocation Methodology"):
         st.markdown("""
-        This model employs a multi-factor approach, optimizing for **Earnings Yield** (Value) and **Relative Strength** (Momentum).
+        This model employs a multi-factor approach, assigning optimal weights to allocate against a basket of ETFs/stocks given their **Relative Strength** (Momentum) and**Earnings Yield** (Value).
         
         * **Weighting:** The optimal capital allocation is derived via an (open source) linear optimization solver.
         * **RSI (Momentum Factor):** The portfolio RSI is the **Weighted Arithmetic Mean** of individual ETFs/stocks and is the metric establishing an ETF's uptrend (>50).
