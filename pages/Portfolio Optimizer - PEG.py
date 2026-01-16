@@ -160,7 +160,7 @@ def optimize_portfolio(df, objective_type, max_weight_per_asset):
         return pd.DataFrame()
 
 # --- DASHBOARD UI ---
-st.title("⚖️ Momentum Optimizer -- Using PEG Ratio for Valuation")
+st.title("⚖️ Portfolio Momentum Optimizer [P/E/G Ratio for Valuation")
 
 # 1. SIDEBAR
 with st.sidebar:
