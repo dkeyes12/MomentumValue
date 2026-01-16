@@ -7,7 +7,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 # --- CONFIGURATION ---
-st.set_page_config(page_title="Portfolio Optimizer (Dual Mode)", layout="wide")
+st.set_page_config(page_title="Portfolio Optimizer [Maximize MomentumValue]", layout="wide")
 
 # --- DATASETS ---
 ETF_TICKERS = [
@@ -200,22 +200,22 @@ def optimize_portfolio(df, objective_type, max_weight_per_asset, mode):
         return pd.DataFrame()
 
 # --- DASHBOARD UI ---
-st.title("⚖️ Portfolio Optimizer (Dual Mode)")
+st.title("⚖️ Portfolio Optimizer: Within S&P500 ETF Sectors (or a Group of Stocks) Maximize MomentumValue]")
 
 # 1. SIDEBAR SETTINGS
 with st.sidebar:
-    st.header("1. Universe Selection")
+    st.header("1. Choose Stocks to Optimize")
     
     # TRIGGER CACHE CLEAR ON CHANGE
     mode_select = st.radio(
-        "Select Strategy:", 
-        ["S&P 500 Sectors (PE)", "Stock (PEG)"], 
+        "Pre-Selected Stock Sectors Or Stocks:", 
+        ["S&P 500 Sectors (P/E)", "Popular and widely followed stocks (P/E/G)"], 
         on_change=clear_cache_callback
     )
     
     st.divider()
     st.header("2. Optimization Settings")
-    obj_choice = st.radio("Goal", ["Maximize Gain (Score)", "Minimize Loss (Volatility)"])
+    obj_choice = st.radio("Goal", ["Maximize Gain (MomentumValue)", "Minimize Loss (Volatility)"])
     max_concentration = st.slider("Max Allocation per Asset", 0.05, 1.0, 0.25, 0.05)
     
     # Explicit Cache Button
@@ -276,16 +276,6 @@ if st.session_state["market_data"] is not None:
     hist_map = st.session_state["historical_data"]
     
     metric_col = "PEG" if mode_select == "Stock (PEG)" else "PE"
-
-    # --- MARKET ANALYSIS ---
-    st.divider()
-    st.subheader("2. Market Data Analysis")
-    st.dataframe(
-        df_market[["Ticker", "Sector", metric_col, "RSI", "Return", "Volatility"]].style.format({
-            metric_col: "{:.2f}", "RSI": "{:.2f}", "Return": "{:.2%}", "Volatility": "{:.2%}"
-        }),
-        use_container_width=True, height=(len(df_market)+1)*35
-    )
 
     if df_opt is not None and not df_opt.empty:
         # --- PLOT ---
@@ -362,6 +352,16 @@ if st.session_state["market_data"] is not None:
             fig.update_layout(height=500, xaxis_rangeslider_visible=False)
             st.plotly_chart(fig, use_container_width=True)
 
+# --- MARKET ANALYSIS ---
+    st.divider()
+    st.subheader("2. Market Data Analysis")
+    st.dataframe(
+        df_market[["Ticker", "Sector", metric_col, "RSI", "Return", "Volatility"]].style.format({
+            metric_col: "{:.2f}", "RSI": "{:.2f}", "Return": "{:.2%}", "Volatility": "{:.2%}"
+        }),
+        use_container_width=True, height=(len(df_market)+1)*35
+    )
+
 # --- LOGIC SUMMARY ---
 st.divider()
 with st.expander("ℹ️ How the Optimization Logic Works"):
@@ -375,8 +375,8 @@ with st.expander("ℹ️ How the Optimization Logic Works"):
     \text{Score} = \underbrace{\left( \frac{\text{RSI}}{100} \right)}_{\text{Momentum}} + \underbrace{\left( \frac{1}{\text{PEG Ratio}} \right)}_{\text{Value}}
     $$
 
-    ### 2. This app uses Open Source (Google) OR Tools' Linear Solver.  
-    # **Linear Programming vs Quadratic (MPT):** We maximize factor exposure ($RSI + Value$) using Linear Programming ($O(n)$) rather than minimizing variance via Quadratic Programming ($O(n^2)$). Risk is managed via concentration constraints rather than historical covariance, avoiding estimation errors common in small samples.
+    ### 2. This app uses an open source Linear Solver (Google - OR Tools).  
+    * ** We maximize factor exposure ($RSI + Value$) using Linear Programming ($O(n)$) rather than minimizing variance via Quadratic Programming ($O(n^2)$). Risk is managed via concentration constraints rather than historical covariance, avoiding estimation errors common in small samples.
     * **Quadratic Programming (MPT):** Modern Portfolio Theory typically employs Quadratic Programming to minimize portfolio variance ($\sigma^2$). This requires calculating the full covariance matrix $\Sigma$ to account for pairwise asset correlations ($O(n^2)$ complexity). It optimizes for the lowest risk at a given return level.
     * **Linear Programming (Factor Exposure):** This tool utilizes Linear Programming (GLOP solver) to maximize direct factor exposure. Instead of minimizing variance through correlation, we mitigate risk via **concentration constraints** (hard limits on max allocation). This allows for a computationally efficient ($O(n)$) maximization of the 'Growth + Momentum' alpha score without the instability often introduced by covariance estimation errors in small samples.
     """)
