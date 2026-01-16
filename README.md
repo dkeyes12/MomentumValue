@@ -33,7 +33,7 @@ Open the URL Streamlit prints in your browser (usually http://localhost:8501).
 
 This is a multi-page Streamlit app with the following structure:
 
-- **Main Dashboard** (`streamlit_app.py`): Dual-mode portfolio optimizer supporting both ETF sector allocation (P/E-based) and individual stock selection (PEG-based) using linear programming.
+- **Main Dashboard** (`streamlit_app.py`): Dual-mode portfolio optimizer supporting both S&P 500 sector ETFs (P/E-based) and individual stock portfolios (PEG-based) using linear programming.
 - **Stock Selection Assist** (`pages/Stock Selection Assist.py`): Individual stock momentum analysis with P/E vs RSI quadrant plots and technical charts.
 
 **Dependencies**: `streamlit`, `yfinance`, `pandas`, `numpy`, `ortools`, `plotly` (see `requirements.txt`).
@@ -45,8 +45,8 @@ This is a multi-page Streamlit app with the following structure:
 ## Pages Overview 📄
 
 ### 1. Portfolio Optimizer (Main App)
-- **Dual Mode Operation**: Switch between "ETF (P/E)" mode for sector allocation and "Stock (PEG)" mode for individual stock portfolios
-- **ETF Mode**: Optimizes sector ETF portfolios using P/E ratios and RSI momentum
+- **Dual Mode Operation**: Switch between "S&P 500 Sectors (P/E)" for sector ETF allocation and "Popular and widely followed stocks (P/E/G)" for individual stock portfolios
+- **ETF Mode**: Optimizes S&P 500 sector ETF portfolios using P/E ratios and RSI momentum
 - **Stock Mode**: Advanced optimization using PEG (Price/Earnings to Growth) ratios for growth-adjusted valuation
 - **Linear Programming**: Uses OR-Tools GLOP solver to maximize gains or minimize volatility
 - **Interactive Universe**: Editable table of tickers with sector mapping
