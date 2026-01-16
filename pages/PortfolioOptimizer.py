@@ -40,19 +40,16 @@ def calculate_rsi(series, window=14):
     rs = gain / loss
     return 100 - (100 / (1 + rs))
 
-def process_bulk_data(tickers, period="2y"):
+def process_bulk_data(tickers, sector_map, period="2y"):
     """
-    Fetches ALL data at once.
-    Returns:
-    1. snapshot_df: Dataframe for the Optimization Engine
-    2. hist_dict: Dictionary of Dataframes for the Charts
+    Fetches ALL data at once and maps sectors.
     """
     ticker_list = [t.upper().strip() for t in tickers if t.strip()]
     
     if not ticker_list:
         return None, None
 
-    # Bulk download is much faster
+    # Bulk download
     bulk_data = yf.download(ticker_list, period=period, group_by='ticker', auto_adjust=False)
     
     snapshot_data = []
@@ -60,7 +57,7 @@ def process_bulk_data(tickers, period="2y"):
 
     for t in ticker_list:
         try:
-            # Handle Single Ticker vs Multi-Ticker structure difference in yfinance
+            # Handle Single Ticker vs Multi-Ticker structure
             if len(ticker_list) == 1:
                 df = bulk_data.copy()
             else:
@@ -68,23 +65,17 @@ def process_bulk_data(tickers, period="2y"):
             
             if df.empty: continue
 
-            # Clean and Calculate Indicators (Pre-calc for charts)
             df = df.dropna(how='all')
             df['SMA_50'] = df['Close'].rolling(window=50).mean()
             df['SMA_200'] = df['Close'].rolling(window=200).mean()
             df['RSI'] = calculate_rsi(df['Close'])
             
-            # Store full history for charts
             hist_data[t] = df
 
-            # Extract Snapshot for Optimization
             current_price = df['Close'].iloc[-1]
             rsi = df['RSI'].iloc[-1]
             volatility = df['Close'].pct_change().std() * np.sqrt(252)
             
-            # Note: Bulk download doesn't give P/E. We fetch info individually or mock it if unavailable.
-            # For speed in this demo, we do a quick separate lookup for P/E only if needed, 
-            # or use a cached approach. To keep it robust, we try Ticker.info.
             try:
                 stock_info = yf.Ticker(t).info
                 pe = stock_info.get('trailingPE')
@@ -95,12 +86,13 @@ def process_bulk_data(tickers, period="2y"):
             if pe is not None and pe > 0:
                 snapshot_data.append({
                     "Ticker": t,
+                    "Sector": sector_map.get(t, "Unknown"), # <--- Add Sector here
                     "Price": current_price,
                     "PE": pe,
                     "RSI": rsi,
                     "Volatility": volatility
                 })
-        except Exception as e:
+        except Exception:
             continue
             
     return pd.DataFrame(snapshot_data), hist_data
@@ -142,6 +134,7 @@ def optimize_portfolio(df, objective_type, max_weight_per_asset):
             if w.solution_value() > 0.001: 
                 results.append({
                     "Ticker": df['Ticker'].iloc[i],
+                    "Sector": df['Sector'].iloc[i], # <--- Preserve Sector
                     "Weight": w.solution_value(),
                     "RSI": df['RSI'].iloc[i],
                     "PE": df['PE'].iloc[i],
@@ -182,18 +175,18 @@ with col_input:
 
 with col_action:
     st.write("### ") 
-    # Use a callback or simply check logic.
-    # We assign a key to the button to track state implicitly, 
-    # but storing data in session_state is safer.
     if st.button("🚀 Run Optimization", type="primary", use_container_width=True):
         
         tickers = edited_df["Ticker"].tolist()
+        # Create map for Sectors
+        sector_mapping = dict(zip(edited_df['Ticker'], edited_df['Sector']))
+
         if len(tickers) < 2:
             st.error("Please enter at least 2 tickers.")
         else:
             with st.spinner("Fetching historical data and optimizing..."):
                 # 1. Fetch ALL data (Snapshot + History)
-                df_mkt, hist_data = process_bulk_data(tickers)
+                df_mkt, hist_data = process_bulk_data(tickers, sector_mapping)
                 
                 if df_mkt is not None and not df_mkt.empty:
                     # 2. Run Optimization
@@ -221,8 +214,20 @@ if st.session_state["market_data"] is not None:
     df_opt = st.session_state["opt_results"]
     hist_map = st.session_state["historical_data"]
 
+    # --- MARKET ANALYSIS ---
+    st.divider()
+    st.subheader("2. Market Data Analysis")
+    height_universe = (len(df_market) + 1) * 35
+    st.dataframe(
+        df_market[["Ticker", "Sector", "PE", "RSI", "Return", "Volatility"]].style.format({
+            "PE": "{:.2f}", "RSI": "{:.2f}", "Return": "{:.2%}", "Volatility": "{:.2%}"
+        }),
+        use_container_width=True,
+        height=height_universe
+    )
+
     if df_opt is not None and not df_opt.empty:
-        # --- VISUALIZATION: SYMMETRIC 2x2 PLOT ---
+        # --- VISUALIZATION ---
         st.subheader("2. Portfolio Analysis (Value vs Momentum)")
         
         PE_THRESHOLD = 25  
@@ -234,7 +239,7 @@ if st.session_state["market_data"] is not None:
 
         fig_quad = go.Figure()
 
-        # Plot Universe (Unselected)
+        # Plot Universe
         fig_quad.add_trace(go.Scatter(
             x=df_remaining['PE'].clip(upper=FIXED_MAX_X), 
             y=df_remaining['RSI'],
@@ -246,7 +251,7 @@ if st.session_state["market_data"] is not None:
             name='Universe'
         ))
 
-        # Plot Portfolio (Selected)
+        # Plot Portfolio
         fig_quad.add_trace(go.Scatter(
             x=df_opt['PE'].clip(upper=FIXED_MAX_X), 
             y=df_opt['RSI'],
@@ -294,7 +299,8 @@ if st.session_state["market_data"] is not None:
                 *Rationale:* P/E is a ratio of Price to Earnings. Averaging ratios directly is mathematically incorrect. The Harmonic Mean correctly averages the underlying "Earnings Yields" (E/P) and inverts the result, providing a true reflection of the portfolio's aggregate valuation.
             """)
 
-        display_df = df_opt[["Ticker", "Weight", "PE", "RSI"]].copy()
+        # Add Sector to display columns
+        display_df = df_opt[["Ticker", "Sector", "Weight", "PE", "RSI"]].copy()
         
         # Totals
         weighted_rsi = (display_df['Weight'] * display_df['RSI']).sum()
@@ -303,6 +309,7 @@ if st.session_state["market_data"] is not None:
 
         summary_row = pd.DataFrame([{
             "Ticker": "PORTFOLIO TOTAL",
+            "Sector": "-",
             "Weight": display_df['Weight'].sum(),
             "PE": portfolio_pe,
             "RSI": weighted_rsi
@@ -316,16 +323,14 @@ if st.session_state["market_data"] is not None:
         height_allocation = (len(final_table) + 1) * 35
         st.dataframe(final_table, use_container_width=True, height=height_allocation)
         
-        # --- TECHNICAL ANALYSIS (Pre-Loaded) ---
+        # --- TECHNICAL ANALYSIS ---
         st.divider()
         st.subheader("4. Technical Analysis (Deep Dive)")
         
         col_sel, _ = st.columns([1, 3])
         with col_sel:
-            # Dropdown reads from the tickers we already fetched
             chart_ticker = st.selectbox("Select Asset to View:", list(hist_map.keys()))
         
-        # Look up data from Session State (Instant, no re-load)
         df_chart = hist_map.get(chart_ticker)
 
         if df_chart is not None:
@@ -352,19 +357,7 @@ if st.session_state["market_data"] is not None:
     else:
         if st.session_state["market_data"] is not None:
              st.error("Optimization failed to find a valid solution. Try increasing Max Allocation.")
- 
-  # --- MARKET ANALYSIS ---
-    st.divider()
-    st.subheader("2. Market Data Analysis")
-    height_universe = (len(df_market) + 1) * 35
-    st.dataframe(
-        df_market.style.format({
-            "PE": "{:.2f}", "RSI": "{:.2f}", "Return": "{:.2%}", "Volatility": "{:.2%}"
-        }),
-        use_container_width=True,
-        height=height_universe
-    )
-    
+
 # --- LOGIC SUMMARY SECTION ---
 st.divider()
 with st.expander("ℹ️ How the Optimization Logic Works"):
