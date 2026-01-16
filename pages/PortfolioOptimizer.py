@@ -248,15 +248,15 @@ if run_optimization:
                 st.subheader("3. Optimal Portfolio Allocation")
                 
                 with st.expander("📊 Strategy Breakdown: Allocation Methodology"):
-                    st.markdown("""
+                    st.markdown(r"""
                     This model employs a multi-factor approach, optimizing for **Earnings Yield** (Value) and **Relative Strength** (Momentum) under strict variance constraints.
                     
-                    * **Weighting:** The optimal capital allocation coefficient derived from the linear optimization solver.
-                    * **RSI (Momentum Factor):** The portfolio RSI is the **Weighted Arithmetic Mean** of individual constituents, targeting assets with established uptrends (>50).
-                    
-                    **Note on P/E Calculation (Harmonic Mean):**
-                    For the Portfolio P/E, we utilize the **Weighted Harmonic Mean** rather than a simple arithmetic average. 
-                    * *Rationale:* P/E is a ratio of Price to Earnings. Averaging ratios directly can be mathematically misleading due to outliers. The Harmonic Mean correctly averages the underlying "Earnings Yields" (E/P) and inverts the result, providing a true reflection of the portfolio's aggregate valuation.
+                    * **Weighting ($w$):** The optimal capital allocation coefficient derived from the linear optimization solver.
+                    * **RSI (Weighted Arithmetic Mean):** The portfolio RSI is the linear weighted average of individual constituents. This represents the momentum 'center of mass' for the portfolio.
+                        $$ \text{Portfolio RSI} = \sum (w_i \cdot RSI_i) $$
+                    * **P/E Ratio (Weighted Harmonic Mean):** For the Portfolio P/E, we utilize the **Weighted Harmonic Mean** rather than a simple arithmetic average. 
+                        $$ \text{Portfolio P/E} = \frac{1}{\sum (w_i \cdot \frac{1}{PE_i})} $$
+                        *Rationale:* P/E is a ratio of Price to Earnings. Averaging ratios directly is mathematically incorrect. The Harmonic Mean correctly averages the underlying "Earnings Yields" (E/P) and inverts the result, providing a true reflection of the portfolio's aggregate valuation.
                     """)
 
                 # --- CALCULATION OF TOTALS ---
@@ -266,8 +266,6 @@ if run_optimization:
                 weighted_rsi = (display_df['Weight'] * display_df['RSI']).sum()
                 
                 # 2. Weighted PE (Harmonic Mean)
-                # Formula: 1 / Sum(Weight / PE)
-                # This equals: 1 / (Weighted Average Earnings Yield)
                 weighted_earnings_yield = (display_df['Weight'] / display_df['PE']).sum()
                 portfolio_pe = 1 / weighted_earnings_yield if weighted_earnings_yield > 0 else 0
 
@@ -287,7 +285,14 @@ if run_optimization:
                 final_table["PE"] = final_table["PE"].apply(lambda x: f"{x:.1f}")
                 final_table["RSI"] = final_table["RSI"].apply(lambda x: f"{x:.1f}")
                 
-                st.dataframe(final_table, use_container_width=False)
+                # Dynamic Height Calculation (35px per row + header buffer)
+                height_px = (len(final_table) + 1) * 35
+
+                st.dataframe(
+                    final_table, 
+                    use_container_width=False,
+                    height=height_px  # <--- FIX: Forces table to expand so Summary Row is visible
+                )
                 
                 # --- TECHNICAL ANALYSIS ---
                 st.divider()
@@ -334,13 +339,13 @@ if run_optimization:
 # --- LOGIC SUMMARY SECTION ---
 st.divider()
 with st.expander("ℹ️ How the Optimization Logic Works"):
-    st.markdown("""
+    st.markdown(r"""
     ### 1. The Scoring Formula
     The optimizer assigns a **"Value-Momentum Score"** to every asset:
     * **Value (50% weight):** Measured by Earnings Yield ($1/PE$). 
     * **Momentum (50% weight):** Measured by RSI. 
     
     $$
-    \\text{Score} = \\underbrace{\\left( \\frac{\\text{RSI}}{100} \\right)}_{\\text{Momentum}} + \\underbrace{\\left( \\frac{1}{\\text{PE Ratio}} \\times 50 \\right)}_{\\text{Value}}
+    \text{Score} = \underbrace{\left( \frac{\text{RSI}}{100} \right)}_{\text{Momentum}} + \underbrace{\left( \frac{1}{\text{PE Ratio}} \times 50 \right)}_{\text{Value}}
     $$
     """)
