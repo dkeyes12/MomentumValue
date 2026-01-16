@@ -5,6 +5,7 @@ import numpy as np
 from ortools.linear_solver import pywraplp
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+import time
 
 # --- CONFIGURATION ---
 st.set_page_config(page_title="Portfolio Optimizer [Maximize MomentumValue]", layout="wide")
@@ -68,8 +69,6 @@ def process_bulk_data(tickers, sector_map, mode, period="2y"):
     mode="ETF" -> Fetches P/E
     mode="Stock" -> Fetches PEG (Falls back to P/E if missing)
     """
-    import time # Import time to handle rate limiting
-    
     ticker_list = [t.upper().strip() for t in tickers if t.strip()]
     if not ticker_list: return None, None
 
@@ -189,10 +188,10 @@ def optimize_portfolio(df, objective_type, max_weight_per_asset, mode):
     
     # --- ADAPTIVE SCORING LOGIC ---
     if mode == "Popular and widely followed stocks (P/E/G)":
-        # PEG Score: 1/PEG + RSI/100 (No multiplier needed, scales are similar)
+        # PEG Score: 1/PEG + RSI/100 
         scores = (df['RSI'] / 100) + (1 / df['PEG']) 
     else:
-        # PE Score: 1/PE * 50 + RSI/100 (Multiplier needed to match scales)
+        # PE Score: 1/PE * 50 + RSI/100 
         scores = (df['RSI'] / 100) + ((1 / df['PE']) * 50)
     
     if objective_type == "Maximize Gain (Score)":
@@ -236,7 +235,7 @@ st.title("⚖️ Portfolio Optimizer: Amongst S&P500 ETFs or stocks")
 
 # 1. SIDEBAR SETTINGS
 with st.sidebar:
-    st.header("1. Universe Selection")
+    st.header("1. Choose Stocks to Optimize")
     
     # TRIGGER CACHE CLEAR ON CHANGE
     mode_select = st.radio(
@@ -278,51 +277,6 @@ if "last_mode" not in st.session_state or st.session_state["last_mode"] != mode_
 col_input, col_action = st.columns([3, 1])
 
 with col_input:
-    edited_df = st.data_editor(
-        st.session_state["user_tickers"], 
-        column_config={
-            "Ticker": st.column_config.TextColumn("Ticker", width="small", help="Symbol"),
-            "Sector": st.column_config.TextColumn("Sector", width="medium"),
-        },
-        num_rows="dynamic", 
-        use_container_width=True,
-        key=f"editor_{mode_select}" 
-    )
-
-with col_action:
-    st.write("### ") 
-    if st.button("🚀 Run Optimization", type="primary", use_container_width=True):
-        
-        tickers = edited_df["Ticker"].tolist()
-        sector_mapping = dict(zip(edited_df['Ticker'], edited_df['Sector']))
-
-        if len(tickers) < 2:
-            st.error("Please enter at least 2 tickers.")
-        else:
-            # Pass the selected period here
-            with st.spinner(f"Fetching {period_select} of data..."):
-                df_mkt, hist_data = process_bulk_data(tickers, sector_mapping, mode_select, period=period_select)
-                
-                if df_mkt is not None and not df_mkt.empty:
-                    df_res = optimize_portfolio(df_mkt, obj_choice, max_concentration, mode_select)
-                    st.session_state["market_data"] = df_mkt
-                    st.session_state["historical_data"] = hist_data
-                    st.session_state["opt_results"] = df_res
-                else:
-                    st.error("Could not fetch valid data. Try individual stocks instead of ETFs.")
-
-# 2. EDITABLE STOCK INPUT
-st.subheader(f"1. Define Universe: {mode_select}")
-
-# --- FIX: LOGIC TO SWAP DEFAULTS ---
-if "last_mode" not in st.session_state or st.session_state["last_mode"] != mode_select:
-    new_defaults = STOCK_TICKERS if mode_select == "Popular and widely followed stocks (P/E/G)" else ETF_TICKERS
-    st.session_state["user_tickers"] = pd.DataFrame(new_defaults)
-    st.session_state["last_mode"] = mode_select
-
-col_input, col_action = st.columns([3, 1])
-
-with col_input:
     # --- FIX: DYNAMIC WIDGET KEY ---
     edited_df = st.data_editor(
         st.session_state["user_tickers"], 
@@ -345,8 +299,8 @@ with col_action:
         if len(tickers) < 2:
             st.error("Please enter at least 2 tickers.")
         else:
-            with st.spinner("Fetching data (PEG & History)..."):
-                df_mkt, hist_data = process_bulk_data(tickers, sector_mapping, mode_select)
+            with st.spinner(f"Fetching {period_select} of data..."):
+                df_mkt, hist_data = process_bulk_data(tickers, sector_mapping, mode_select, period=period_select)
                 
                 if df_mkt is not None and not df_mkt.empty:
                     df_res = optimize_portfolio(df_mkt, obj_choice, max_concentration, mode_select)
@@ -370,9 +324,9 @@ if st.session_state["market_data"] is not None:
     if df_opt is not None and not df_opt.empty:
         # --- PLOT ---
         st.subheader("2. Portfolio Analysis")
-        RSI_THRESHOLD = 50
+        
         # --- DYNAMIC SCALING LOGIC (Fix for P/E Fallback) ---
-        # Detect if we are looking at PEG (usually < 5) or P/E (usually > 10)
+        RSI_THRESHOLD = 50
         data_median = df_market[metric_col].median()
         
         if data_median > 5.0:
@@ -421,21 +375,13 @@ if st.session_state["market_data"] is not None:
         fig_quad.update_layout(title=f"{mode_select} Analysis", height=600)
         st.plotly_chart(fig_quad, use_container_width=True)
 
-# --- EXPLANATION & ALLOCATION TABLE ---
+        # --- ALLOCATION TABLE ---
         st.divider()
-        st.subheader("3. Optimal Portfolio Allocation")
+        st.subheader("3. Optimal Allocation")
         
-        with st.expander("📊 Strategy Breakdown: Allocation Methodology"):
-            st.markdown("""
-            This model employs a multi-factor approach, optimizing for **Earnings Yield** (Value) and **Relative Strength** (Momentum) under strict variance constraints.
-            
-            * **Weighting:** The optimal capital allocation coefficient derived from the linear optimization solver.
-            * **RSI (Momentum Factor):** The portfolio RSI is the **Weighted Arithmetic Mean** of individual constituents, targeting assets with established uptrends (>50).
-            
-            **Note on P/E Calculation (Harmonic Mean):**
-            For the Portfolio P/E, we utilize the **Weighted Harmonic Mean** rather than a simple arithmetic average. 
-            * *Rationale:* P/E is a ratio of Price to Earnings. Averaging ratios directly can be mathematically misleading due to outliers. The Harmonic Mean correctly averages the underlying "Earnings Yields" (E/P) and inverts the result, providing a true reflection of the portfolio's aggregate valuation.
-            """)
+        with st.expander("📊 Methodology"):
+            st.write(f"Uses Linear Programming. Aggregates calculated via Weighted Arithmetic Mean (RSI) and Weighted Harmonic Mean ({metric_col}).")
+        
         disp_df = df_opt[["Ticker", "Sector", "Weight", metric_col, "RSI"]].copy()
         
         # Totals
@@ -492,6 +438,7 @@ with st.expander("ℹ️ How the Optimization Logic Works"):
     $$
 
     ### 2. Linear vs. Quadratic Optimization 
+    
     * **Linear Programming (Factor Exposure):** This tool utilizes Linear Programming (GLOP solver) to maximize direct factor exposure. Instead of minimizing variance through correlation, we mitigate risk via **concentration constraints** (hard limits on max allocation). This allows for a computationally efficient ($O(n)$) maximization of the 'Growth + Momentum' alpha score without the instability often introduced by covariance estimation errors in small samples.
     * **Quadratic Programming (MPT):** Modern Portfolio Theory typically employs Quadratic Programming to minimize portfolio variance ($\sigma^2$). This requires calculating the full covariance matrix $\Sigma$ to account for pairwise asset correlations ($O(n^2)$ complexity). It optimizes for the lowest risk at a given return level.
     """)
