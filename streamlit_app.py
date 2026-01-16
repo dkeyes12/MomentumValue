@@ -160,7 +160,6 @@ def process_bulk_data(tickers, sector_map, mode, period="2y"):
                     
                 snapshot_data.append(row)
             else:
-                # Optional: log which tickers failed to have data
                 print(f"Skipping {t}: No valid valuation metric found.")
 
         except Exception as e:
@@ -189,7 +188,6 @@ def optimize_portfolio(df, objective_type, max_weight_per_asset, mode):
     objective = solver.Objective()
     
     # --- ADAPTIVE SCORING LOGIC ---
-    # Switches formula based on the selected mode
     if mode == "Popular and widely followed stocks (P/E/G)":
         # PEG Score: 1/PEG + RSI/100 (No multiplier needed, scales are similar)
         scores = (df['RSI'] / 100) + (1 / df['PEG']) 
@@ -223,7 +221,6 @@ def optimize_portfolio(df, objective_type, max_weight_per_asset, mode):
                     "RSI": df['RSI'].iloc[i],
                     "Volatility": df['Volatility'].iloc[i]
                 }
-                # Add the correct valuation metric to the results
                 if mode == "Popular and widely followed stocks (P/E/G)":
                     row["PEG"] = df['PEG'].iloc[i]
                 else:
@@ -263,19 +260,15 @@ with st.sidebar:
 st.subheader(f"1. Define Universe: {mode_select}")
 
 # --- FIX: LOGIC TO SWAP DEFAULTS ---
-# Check if the mode changed. If yes, overwrite the table data with the new defaults.
 if "last_mode" not in st.session_state or st.session_state["last_mode"] != mode_select:
-    # Load the correct list based on the toggle
     new_defaults = STOCK_TICKERS if mode_select == "Popular and widely followed stocks (P/E/G)" else ETF_TICKERS
     st.session_state["user_tickers"] = pd.DataFrame(new_defaults)
-    st.session_state["last_mode"] = mode_select  # Remember the new mode
+    st.session_state["last_mode"] = mode_select
 
 col_input, col_action = st.columns([3, 1])
 
 with col_input:
     # --- FIX: DYNAMIC WIDGET KEY ---
-    # We change the key=... to include the mode name. 
-    # This forces Streamlit to destroy the old table and build a fresh one.
     edited_df = st.data_editor(
         st.session_state["user_tickers"], 
         column_config={
@@ -323,15 +316,22 @@ if st.session_state["market_data"] is not None:
         # --- PLOT ---
         st.subheader("2. Portfolio Analysis")
         
-        # Scaling Logic
-        if mode_select == "Popular and widely followed stocks (P/E/G)":
+        # --- DYNAMIC SCALING LOGIC (Fix for P/E Fallback) ---
+        # Detect if we are looking at PEG (usually < 5) or P/E (usually > 10)
+        data_median = df_market[metric_col].median()
+        
+        if data_median > 5.0:
+            # SCENARIO: P/E Data (ETF mode OR Stock mode fallback)
+            VAL_THRESHOLD = 25
+            MAX_X = max(60, df_market[metric_col].max() * 1.1) 
+            x_label = "P/E Ratio (Value)"
+            if mode_select == "Popular and widely followed stocks (P/E/G)":
+                x_label = "P/E Ratio (PEG Missing - Fallback Applied)"
+        else:
+            # SCENARIO: PEG Data
             VAL_THRESHOLD = 1.5
             MAX_X = 4.0
             x_label = "PEG Ratio (Growth Value)"
-        else:
-            VAL_THRESHOLD = 25
-            MAX_X = 50
-            x_label = "P/E Ratio (Value)"
             
         fig_quad = go.Figure()
         
@@ -352,7 +352,18 @@ if st.session_state["market_data"] is not None:
         fig_quad.add_shape(type="rect", x0=0, y0=0, x1=VAL_THRESHOLD, y1=50, fillcolor="yellow", opacity=0.1, layer="below", line_width=0)
         fig_quad.add_shape(type="rect", x0=VAL_THRESHOLD, y0=0, x1=MAX_X, y1=50, fillcolor="red", opacity=0.1, layer="below", line_width=0)
 
-        fig_quad.update_layout(title=f"{mode_select} Analysis", xaxis_title=x_label, yaxis_title="RSI (Momentum)", height=600)
+        # Labels & Lines
+        fig_quad.add_vline(x=VAL_THRESHOLD, line_width=1, line_dash="dash", line_color="gray")
+        fig_quad.add_hline(y=RSI_THRESHOLD, line_width=1, line_dash="dash", line_color="gray")
+        
+        fig_quad.add_annotation(x=VAL_THRESHOLD/2, y=90, text="VALUE + MOMENTUM", showarrow=False, font=dict(color="green", size=14, weight="bold"))
+        fig_quad.add_annotation(x=VAL_THRESHOLD + (MAX_X-VAL_THRESHOLD)/2, y=90, text="EXPENSIVE MOMENTUM", showarrow=False, font=dict(color="orange", size=10))
+        fig_quad.add_annotation(x=VAL_THRESHOLD/2, y=10, text="WEAK / VALUE TRAP", showarrow=False, font=dict(color="orange", size=10))
+        fig_quad.add_annotation(x=VAL_THRESHOLD + (MAX_X-VAL_THRESHOLD)/2, y=10, text="EXPENSIVE & WEAK", showarrow=False, font=dict(color="red", size=14, weight="bold"))
+
+        fig_quad.update_xaxes(title_text=x_label, range=[0, MAX_X])
+        fig_quad.update_yaxes(title_text="RSI (Momentum)", range=[0, 100])
+        fig_quad.update_layout(title=f"{mode_select} Analysis", height=600)
         st.plotly_chart(fig_quad, use_container_width=True)
 
         # --- ALLOCATION TABLE ---
