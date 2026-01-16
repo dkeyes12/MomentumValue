@@ -236,7 +236,7 @@ st.title("⚖️ Portfolio Optimizer: Amongst S&P500 ETFs or stocks")
 
 # 1. SIDEBAR SETTINGS
 with st.sidebar:
-    st.header("1. Choose Stocks to Optimize")
+    st.header("1. Universe Selection")
     
     # TRIGGER CACHE CLEAR ON CHANGE
     mode_select = st.radio(
@@ -246,7 +246,17 @@ with st.sidebar:
     )
     
     st.divider()
-    st.header("2. Optimization Settings")
+    st.header("2. Time Horizon")
+    # NEW: Time Period Selector
+    period_select = st.selectbox(
+        "Historical Data Lookback:",
+        options=["1y", "2y", "3y", "5y"],
+        index=3, # Default to 5y
+        help="Determines the window for RSI, Volatility, and Return calculations."
+    )
+
+    st.divider()
+    st.header("3. Optimization Settings")
     obj_choice = st.radio("Goal", ["Maximize Gain (MomentumValue)", "Minimize Loss (Volatility)"])
     max_concentration = st.slider("Max Allocation per Asset", 0.05, 1.0, 0.25, 0.05)
     
@@ -255,6 +265,51 @@ with st.sidebar:
     if st.button("⚠️ Force Clear Cache"):
         clear_cache_callback()
         st.rerun()
+
+# 2. EDITABLE STOCK INPUT
+st.subheader(f"1. Define Universe: {mode_select}")
+
+# --- FIX: LOGIC TO SWAP DEFAULTS ---
+if "last_mode" not in st.session_state or st.session_state["last_mode"] != mode_select:
+    new_defaults = STOCK_TICKERS if mode_select == "Popular and widely followed stocks (P/E/G)" else ETF_TICKERS
+    st.session_state["user_tickers"] = pd.DataFrame(new_defaults)
+    st.session_state["last_mode"] = mode_select
+
+col_input, col_action = st.columns([3, 1])
+
+with col_input:
+    edited_df = st.data_editor(
+        st.session_state["user_tickers"], 
+        column_config={
+            "Ticker": st.column_config.TextColumn("Ticker", width="small", help="Symbol"),
+            "Sector": st.column_config.TextColumn("Sector", width="medium"),
+        },
+        num_rows="dynamic", 
+        use_container_width=True,
+        key=f"editor_{mode_select}" 
+    )
+
+with col_action:
+    st.write("### ") 
+    if st.button("🚀 Run Optimization", type="primary", use_container_width=True):
+        
+        tickers = edited_df["Ticker"].tolist()
+        sector_mapping = dict(zip(edited_df['Ticker'], edited_df['Sector']))
+
+        if len(tickers) < 2:
+            st.error("Please enter at least 2 tickers.")
+        else:
+            # Pass the selected period here
+            with st.spinner(f"Fetching {period_select} of data..."):
+                df_mkt, hist_data = process_bulk_data(tickers, sector_mapping, mode_select, period=period_select)
+                
+                if df_mkt is not None and not df_mkt.empty:
+                    df_res = optimize_portfolio(df_mkt, obj_choice, max_concentration, mode_select)
+                    st.session_state["market_data"] = df_mkt
+                    st.session_state["historical_data"] = hist_data
+                    st.session_state["opt_results"] = df_res
+                else:
+                    st.error("Could not fetch valid data. Try individual stocks instead of ETFs.")
 
 # 2. EDITABLE STOCK INPUT
 st.subheader(f"1. Define Universe: {mode_select}")
