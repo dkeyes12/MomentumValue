@@ -221,18 +221,6 @@ if st.session_state["market_data"] is not None:
     df_opt = st.session_state["opt_results"]
     hist_map = st.session_state["historical_data"]
 
-    # --- MARKET ANALYSIS ---
-    st.divider()
-    st.subheader("2. Market Data Analysis")
-    height_universe = (len(df_market) + 1) * 35
-    st.dataframe(
-        df_market.style.format({
-            "PE": "{:.2f}", "RSI": "{:.2f}", "Return": "{:.2%}", "Volatility": "{:.2%}"
-        }),
-        use_container_width=True,
-        height=height_universe
-    )
-
     if df_opt is not None and not df_opt.empty:
         # --- VISUALIZATION: SYMMETRIC 2x2 PLOT ---
         st.subheader("2. Portfolio Analysis (Value vs Momentum)")
@@ -364,7 +352,19 @@ if st.session_state["market_data"] is not None:
     else:
         if st.session_state["market_data"] is not None:
              st.error("Optimization failed to find a valid solution. Try increasing Max Allocation.")
-
+ 
+  # --- MARKET ANALYSIS ---
+    st.divider()
+    st.subheader("2. Market Data Analysis")
+    height_universe = (len(df_market) + 1) * 35
+    st.dataframe(
+        df_market.style.format({
+            "PE": "{:.2f}", "RSI": "{:.2f}", "Return": "{:.2%}", "Volatility": "{:.2%}"
+        }),
+        use_container_width=True,
+        height=height_universe
+    )
+    
 # --- LOGIC SUMMARY SECTION ---
 st.divider()
 with st.expander("ℹ️ How the Optimization Logic Works"):
