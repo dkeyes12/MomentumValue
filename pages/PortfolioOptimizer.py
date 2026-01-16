@@ -4,11 +4,12 @@ import pandas as pd
 import numpy as np
 from ortools.linear_solver import pywraplp
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots  # Required for the new chart
 
 # --- CONFIGURATION ---
 st.set_page_config(page_title="Sector Portfolio Optimizer", layout="wide")
 
-# --- UPDATED: S&P 500 SECTOR UNIVERSE ---
+# --- S&P 500 SECTOR UNIVERSE ---
 DEFAULT_TICKERS = [
     {"Ticker": "XLK", "Sector": "Technology"},
     {"Ticker": "XLV", "Sector": "Health Care"},
@@ -33,8 +34,8 @@ def calculate_rsi(series, window=14):
 
 @st.cache_data
 def fetch_market_data(tickers, period="1y"):
+    """Fetches snapshot data for the Optimizer"""
     data = []
-    # Handle list of dicts or list of strings
     ticker_list = [t["Ticker"] for t in tickers] if isinstance(tickers[0], dict) else tickers
     
     with st.spinner(f"Fetching data for {len(ticker_list)} assets..."):
@@ -55,8 +56,6 @@ def fetch_market_data(tickers, period="1y"):
                 pe = stock.info.get('trailingPE')
                 if pe is None: pe = stock.info.get('forwardPE')
                 
-                # Note: Some ETFs might not have P/E data in yfinance. 
-                # We include them if PE > 0.
                 if pe is not None and pe > 0:
                     data.append({
                         "Ticker": t,
@@ -69,6 +68,18 @@ def fetch_market_data(tickers, period="1y"):
                 continue
                 
     return pd.DataFrame(data)
+
+def get_chart_data(ticker, period="2y"):
+    """Fetches historical data specifically for the Chart"""
+    stock = yf.Ticker(ticker)
+    df = stock.history(period=period)
+    if df.empty: return None
+    
+    # Calculate Indicators for the chart
+    df['SMA_50'] = df['Close'].rolling(window=50).mean()
+    df['SMA_200'] = df['Close'].rolling(window=200).mean()
+    df['RSI'] = calculate_rsi(df['Close'])
+    return df
 
 # --- OPTIMIZATION ENGINE ---
 def optimize_portfolio(df, objective_type, max_weight_per_asset):
@@ -127,7 +138,7 @@ with st.sidebar:
     st.info("Edit the table to add individual stocks or other ETFs.")
 
 # 2. EDITABLE STOCK INPUT
-st.subheader("1. Define Universe (S&P 500 Sectors)")
+st.subheader("1. Define Universe")
 col_input, col_action = st.columns([3, 1])
 
 with col_input:
@@ -151,7 +162,7 @@ with col_action:
 
 # 3. EXECUTION
 if run_optimization:
-    # --- CSS HACK: Force Center Alignment in Dataframes ---
+    # CSS for centering
     st.markdown("""
     <style>
         [data-testid="stDataFrame"] th { text-align: center !important; }
@@ -164,40 +175,20 @@ if run_optimization:
     if len(ticker_list) < 2:
         st.error("Please enter at least 2 tickers.")
     else:
+        # Fetch Data
         df_market = fetch_market_data(ticker_list)
 
         if not df_market.empty:
             st.divider()
             
-            # --- MARKET ANALYSIS ---
-            st.subheader("2. Market Data Analysis")
-            
-            st.dataframe(
-                df_market.style.format({
-                    "PE": "{:.2f}", 
-                    "RSI": "{:.2f}", 
-                    "Return": "{:.2%}", 
-                    "Volatility": "{:.2%}"
-                }),
-                use_container_width=False 
-            )
-
+            # Run Optimization
             with st.spinner("Optimizing..."):
                 df_opt = optimize_portfolio(df_market, obj_choice, max_concentration)
 
             if not df_opt.empty:
-                st.subheader(f"2. Optimal Allocation ({obj_choice})")
                 
-                # --- RESULTS TABLE ---
-                display_df = df_opt[["Ticker", "Weight", "PE", "RSI"]].copy()
-                display_df["Weight"] = display_df["Weight"].apply(lambda x: f"{x:.1%}")
-                display_df["PE"] = display_df["PE"].apply(lambda x: f"{x:.1f}")
-                display_df["RSI"] = display_df["RSI"].apply(lambda x: f"{x:.1f}")
-                
-                st.dataframe(display_df, use_container_width=False)
-
-                # --- VISUALIZATION: SYMMETRIC 2x2 PLOT ---
-                st.subheader("3. Portfolio Analysis (Value vs Momentum)")
+                # --- [MOVED FIRST] VISUALIZATION: SYMMETRIC 2x2 PLOT ---
+                st.subheader("2. Portfolio Analysis (Value vs Momentum)")
                 
                 PE_THRESHOLD = 25  
                 RSI_THRESHOLD = 50
@@ -208,7 +199,7 @@ if run_optimization:
 
                 fig_quad = go.Figure()
 
-                # 1. Plot ONLY the Unselected Stocks (Universe)
+                # 1. Plot Unselected (Universe)
                 fig_quad.add_trace(go.Scatter(
                     x=df_remaining['PE'].clip(upper=FIXED_MAX_X), 
                     y=df_remaining['RSI'],
@@ -216,15 +207,11 @@ if run_optimization:
                     text=df_remaining['Ticker'],
                     textposition="top center",
                     textfont=dict(family="Arial", size=11, color="black"),
-                    marker=dict(
-                        size=12, 
-                        color='rgba(128, 128, 128, 0.5)', 
-                        line=dict(width=1, color='dimgray')
-                    ),
+                    marker=dict(size=12, color='rgba(128, 128, 128, 0.5)', line=dict(width=1, color='dimgray')),
                     name='Universe'
                 ))
 
-                # 2. Plot ONLY the Selected Portfolio Stocks
+                # 2. Plot Selected (Portfolio)
                 fig_quad.add_trace(go.Scatter(
                     x=df_opt['PE'].clip(upper=FIXED_MAX_X), 
                     y=df_opt['RSI'],
@@ -232,43 +219,77 @@ if run_optimization:
                     text=df_opt['Ticker'],
                     textposition="top center",
                     textfont=dict(family="Arial Black", size=12, color="black"), 
-                    marker=dict(
-                        size=18, 
-                        color='blue', 
-                        line=dict(width=2, color='black')
-                    ),
+                    marker=dict(size=18, color='blue', line=dict(width=2, color='black')),
                     name='Selected Portfolio'
                 ))
 
-                # 3. Add Colored Quadrant Backgrounds
-                fig_quad.add_shape(type="rect", x0=0, y0=RSI_THRESHOLD, x1=PE_THRESHOLD, y1=100,
-                                   fillcolor="green", opacity=0.1, layer="below", line_width=0)
-                
-                fig_quad.add_shape(type="rect", x0=PE_THRESHOLD, y0=RSI_THRESHOLD, x1=FIXED_MAX_X, y1=100,
-                                   fillcolor="yellow", opacity=0.1, layer="below", line_width=0)
+                # 3. Backgrounds
+                fig_quad.add_shape(type="rect", x0=0, y0=RSI_THRESHOLD, x1=PE_THRESHOLD, y1=100, fillcolor="green", opacity=0.1, layer="below", line_width=0)
+                fig_quad.add_shape(type="rect", x0=PE_THRESHOLD, y0=RSI_THRESHOLD, x1=FIXED_MAX_X, y1=100, fillcolor="yellow", opacity=0.1, layer="below", line_width=0)
+                fig_quad.add_shape(type="rect", x0=0, y0=0, x1=PE_THRESHOLD, y1=RSI_THRESHOLD, fillcolor="yellow", opacity=0.1, layer="below", line_width=0)
+                fig_quad.add_shape(type="rect", x0=PE_THRESHOLD, y0=0, x1=FIXED_MAX_X, y1=RSI_THRESHOLD, fillcolor="red", opacity=0.1, layer="below", line_width=0)
 
-                fig_quad.add_shape(type="rect", x0=0, y0=0, x1=PE_THRESHOLD, y1=RSI_THRESHOLD,
-                                   fillcolor="yellow", opacity=0.1, layer="below", line_width=0)
-                
-                fig_quad.add_shape(type="rect", x0=PE_THRESHOLD, y0=0, x1=FIXED_MAX_X, y1=RSI_THRESHOLD,
-                                   fillcolor="red", opacity=0.1, layer="below", line_width=0)
-
-                # Add Crosshair Lines
+                # Lines & Labels
                 fig_quad.add_vline(x=PE_THRESHOLD, line_width=1, line_dash="dash", line_color="gray")
                 fig_quad.add_hline(y=RSI_THRESHOLD, line_width=1, line_dash="dash", line_color="gray")
-
-                # Quadrant Labels
                 fig_quad.add_annotation(x=PE_THRESHOLD/2, y=90, text="VALUE + MOMENTUM", showarrow=False, font=dict(color="green", size=14, weight="bold"))
                 fig_quad.add_annotation(x=PE_THRESHOLD * 1.5, y=90, text="EXPENSIVE MOMENTUM", showarrow=False, font=dict(color="orange", size=10))
                 fig_quad.add_annotation(x=PE_THRESHOLD/2, y=10, text="WEAK / VALUE TRAP", showarrow=False, font=dict(color="orange", size=10))
                 fig_quad.add_annotation(x=PE_THRESHOLD * 1.5, y=10, text="EXPENSIVE & WEAK", showarrow=False, font=dict(color="red", size=14, weight="bold"))
 
-                # Strict Axis Range
                 fig_quad.update_xaxes(title_text="P/E Ratio (Value)", range=[0, FIXED_MAX_X])
                 fig_quad.update_yaxes(title_text="RSI (Momentum)", range=[0, 100])
                 fig_quad.update_layout(height=600, title="Market Universe & Selection")
 
                 st.plotly_chart(fig_quad, use_container_width=True)
+
+                # --- OPTIMAL ALLOCATION TABLE ---
+                st.write("### Optimal Allocation")
+                display_df = df_opt[["Ticker", "Weight", "PE", "RSI"]].copy()
+                display_df["Weight"] = display_df["Weight"].apply(lambda x: f"{x:.1%}")
+                display_df["PE"] = display_df["PE"].apply(lambda x: f"{x:.1f}")
+                display_df["RSI"] = display_df["RSI"].apply(lambda x: f"{x:.1f}")
+                
+                st.dataframe(display_df, use_container_width=False)
+                
+                # --- TECHNICAL ANALYSIS (Replaces Market Data Table) ---
+                st.divider()
+                st.subheader("3. Technical Analysis")
+                
+                # Selectbox to pick which stock to view
+                col_sel, _ = st.columns([1, 3])
+                with col_sel:
+                    chart_ticker = st.selectbox("Select Asset to View:", ticker_list)
+                
+                rsi_source = "Close" # Default for chart
+                
+                with st.spinner(f"Loading chart for {chart_ticker}..."):
+                    df_chart = get_chart_data(chart_ticker)
+                
+                if df_chart is not None:
+                    # --- USER'S CHART LOGIC ---
+                    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, 
+                            vertical_spacing=0.05, row_heights=[0.7, 0.3])
+
+                    # Price Chart
+                    fig.add_trace(go.Candlestick(x=df_chart.index,
+                                        open=df_chart['Open'], high=df_chart['High'],
+                                        low=df_chart['Low'], close=df_chart['Close'], name='OHLC'), row=1, col=1)
+                    fig.add_trace(go.Scatter(x=df_chart.index, y=df_chart['SMA_50'], 
+                                    line=dict(color='orange', width=2), name='50 Day MA'), row=1, col=1)
+                    fig.add_trace(go.Scatter(x=df_chart.index, y=df_chart['SMA_200'], 
+                                    line=dict(color='blue', width=2), name='200 Day MA'), row=1, col=1)
+
+                    # RSI Chart
+                    fig.add_trace(go.Scatter(x=df_chart.index, y=df_chart['RSI'], 
+                                    line=dict(color='purple', width=2), name=f'RSI ({rsi_source})'), row=2, col=1)
+                    fig.add_hline(y=70, line_dash="dot", row=2, col=1, line_color="red")
+                    fig.add_hline(y=30, line_dash="dot", row=2, col=1, line_color="green")
+                    fig.add_hline(y=50, line_dash="solid", row=2, col=1, line_color="gray", opacity=0.5)
+
+                    fig.update_layout(xaxis_rangeslider_visible=False, height=600, margin=dict(l=20, r=20, t=30, b=20))
+                    
+                    st.plotly_chart(fig, use_container_width=True)
 
             else:
                 st.error("No optimal solution found. Try relaxing the constraints (increase Max Weight).")
@@ -287,9 +308,4 @@ with st.expander("ℹ️ How the Optimization Logic Works"):
     $$
     \\text{Score} = \\underbrace{\\left( \\frac{\\text{RSI}}{100} \\right)}_{\\text{Momentum}} + \\underbrace{\\left( \\frac{1}{\\text{PE Ratio}} \\times 50 \\right)}_{\\text{Value}}
     $$
-
-    ### 2. Optimization Modes
-    * **📈 Maximize Gain:** The solver finds the exact mix of sectors that maximizes the **Total Portfolio Score**, subject to your concentration limit.
-    * **🛡️ Minimize Loss:** The solver finds the mix with the **lowest historical Volatility**. 
-        * *Constraint:* The portfolio's average Score must still be at least equal to the market average to ensure quality.
     """)
