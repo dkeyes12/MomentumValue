@@ -160,7 +160,7 @@ def optimize_portfolio(df, objective_type, max_weight_per_asset):
         return pd.DataFrame()
 
 # --- DASHBOARD UI ---
-st.title("⚖️ Portfolio Momentum Optimizer [P/E/G Ratio for Valuation")
+st.title("⚖️ Portfolio Momentum Optimizer [P/E/G Ratio for Valuation]")
 
 # 1. SIDEBAR
 with st.sidebar:
@@ -382,4 +382,8 @@ with st.expander("ℹ️ How the Optimization Logic Works"):
     $$
     \text{Score} = \underbrace{\left( \frac{\text{RSI}}{100} \right)}_{\text{Momentum}} + \underbrace{\left( \frac{1}{\text{PEG Ratio}} \right)}_{\text{Value}}
     $$
+
+    ### 2. This app uses Open Source (Google) OR Tools' Linear Solver. Portfolio Optimization using Linear vs. Quadratic Optimization is much simpler and easier to understand: 
+    * **Quadratic Programming (MPT):** Modern Portfolio Theory typically employs Quadratic Programming to minimize portfolio variance ($\sigma^2$). This requires calculating the full covariance matrix $\Sigma$ to account for pairwise asset correlations ($O(n^2)$ complexity). It optimizes for the lowest risk at a given return level.
+    * **Linear Programming (Factor Exposure):** This tool utilizes Linear Programming (GLOP solver) to maximize direct factor exposure. Instead of minimizing variance through correlation, we mitigate risk via **concentration constraints** (hard limits on max allocation). This allows for a computationally efficient ($O(n)$) maximization of the 'Growth + Momentum' alpha score without the instability often introduced by covariance estimation errors in small samples.
     """)

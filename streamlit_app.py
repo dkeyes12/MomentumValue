@@ -153,7 +153,7 @@ def optimize_portfolio(df, objective_type, max_weight_per_asset):
         return pd.DataFrame()
 
 # --- DASHBOARD UI ---
-st.title("⚖️ Portfolio Optimizer -- MomentumValue")
+st.title("⚖️ Portfolio Optimizer: Maximize MomentumValue ")
 
 # 1. SIDEBAR
 with st.sidebar:
@@ -368,16 +368,20 @@ if st.session_state["market_data"] is not None:
         height=height_universe
     )
 
-# --- LOGIC SUMMARY SECTION ---
+# --- LOGIC SUMMARY ---
 st.divider()
 with st.expander("ℹ️ How the Optimization Logic Works"):
     st.markdown(r"""
     ### 1. The Scoring Formula
-    The optimizer assigns a **"Value-Momentum Score"** to every asset:
-    * **Value (50% weight):** Measured by Earnings Yield ($1/PE$). 
-    * **Momentum (50% weight):** Measured by RSI. 
+    The optimizer assigns a **"Growth-Momentum Score"** to every asset:
+    * **Value (PEG):** Inverse of PEG. Lower PEG = Higher Score.
+    * **Momentum (RSI):** Normalized RSI.
     
     $$
-    \text{Score} = \underbrace{\left( \frac{\text{RSI}}{100} \right)}_{\text{Momentum}} + \underbrace{\left( \frac{1}{\text{PE Ratio}} \times 50 \right)}_{\text{Value}}
+    \text{Score} = \underbrace{\left( \frac{\text{RSI}}{100} \right)}_{\text{Momentum}} + \underbrace{\left( \frac{1}{\text{PEG Ratio}} \right)}_{\text{Value}}
     $$
+
+    ### 2. This app uses Open Source (Google) OR Tools' Linear Solver. Portfolio Optimization using Linear vs. Quadratic Optimization is much simpler and easier to understand: 
+    * **Quadratic Programming (MPT):** Modern Portfolio Theory typically employs Quadratic Programming to minimize portfolio variance ($\sigma^2$). This requires calculating the full covariance matrix $\Sigma$ to account for pairwise asset correlations ($O(n^2)$ complexity). It optimizes for the lowest risk at a given return level.
+    * **Linear Programming (Factor Exposure):** This tool utilizes Linear Programming (GLOP solver) to maximize direct factor exposure. Instead of minimizing variance through correlation, we mitigate risk via **concentration constraints** (hard limits on max allocation). This allows for a computationally efficient ($O(n)$) maximization of the 'Growth + Momentum' alpha score without the instability often introduced by covariance estimation errors in small samples.
     """)
