@@ -43,12 +43,10 @@ STOCK_TICKERS = [
 def clear_cache_callback():
     """Forces a complete reset of cache and state when switching modes"""
     st.cache_data.clear()
-    if "market_data" in st.session_state:
-        del st.session_state["market_data"]
-    if "opt_results" in st.session_state:
-        del st.session_state["opt_results"]
-    if "historical_data" in st.session_state:
-        del st.session_state["historical_data"]
+    keys_to_drop = ["market_data", "opt_results", "historical_data"]
+    for k in keys_to_drop:
+        if k in st.session_state:
+            del st.session_state[k]
 
 # --- INITIALIZE STATE ---
 if "market_data" not in st.session_state: st.session_state["market_data"] = None
@@ -108,7 +106,7 @@ def process_bulk_data(tickers, sector_map, mode, period="2y"):
             val_metric = None
             try:
                 stock_info = yf.Ticker(t).info
-                if mode == "Stock (PEG)":
+                if mode == "Popular and widely followed stocks (P/E/G)":
                     val_metric = stock_info.get('pegRatio')
                 else: # ETF (PE)
                     val_metric = stock_info.get('trailingPE')
@@ -127,7 +125,7 @@ def process_bulk_data(tickers, sector_map, mode, period="2y"):
                     "Return": pct_return
                 }
                 # Assign to correct column based on mode
-                if mode == "Stock (PEG)":
+                if mode == "Popular and widely followed stocks (P/E/G)":
                     row["PEG"] = val_metric
                     row["PE"] = np.nan # Placeholder
                 else:
@@ -159,7 +157,7 @@ def optimize_portfolio(df, objective_type, max_weight_per_asset, mode):
     
     # --- ADAPTIVE SCORING LOGIC ---
     # Switches formula based on the selected mode
-    if mode == "Stock (PEG)":
+    if mode == "Popular and widely followed stocks (P/E/G)":
         # PEG Score: 1/PEG + RSI/100 (No multiplier needed, scales are similar)
         scores = (df['RSI'] / 100) + (1 / df['PEG']) 
     else:
@@ -193,7 +191,7 @@ def optimize_portfolio(df, objective_type, max_weight_per_asset, mode):
                     "Volatility": df['Volatility'].iloc[i]
                 }
                 # Add the correct valuation metric to the results
-                if mode == "Stock (PEG)":
+                if mode == "Popular and widely followed stocks (P/E/G)":
                     row["PEG"] = df['PEG'].iloc[i]
                 else:
                     row["PE"] = df['PE'].iloc[i]
@@ -235,7 +233,7 @@ st.subheader(f"1. Define Universe: {mode_select}")
 # Check if the mode changed. If yes, overwrite the table data with the new defaults.
 if "last_mode" not in st.session_state or st.session_state["last_mode"] != mode_select:
     # Load the correct list based on the toggle
-    new_defaults = STOCK_TICKERS if mode_select == "Stock (PEG)" else ETF_TICKERS
+    new_defaults = STOCK_TICKERS if mode_select == "Popular and widely followed stocks (P/E/G)" else ETF_TICKERS
     st.session_state["user_tickers"] = pd.DataFrame(new_defaults)
     st.session_state["last_mode"] = mode_select  # Remember the new mode
 
@@ -286,14 +284,14 @@ if st.session_state["market_data"] is not None:
     df_opt = st.session_state["opt_results"]
     hist_map = st.session_state["historical_data"]
     
-    metric_col = "PEG" if mode_select == "Stock (PEG)" else "PE"
+    metric_col = "PEG" if mode_select == "Popular and widely followed stocks (P/E/G)" else "PE"
 
     if df_opt is not None and not df_opt.empty:
         # --- PLOT ---
         st.subheader("2. Portfolio Analysis")
         
         # Scaling Logic
-        if mode_select == "Stock (PEG)":
+        if mode_select == "Popular and widely followed stocks (P/E/G)":
             VAL_THRESHOLD = 1.5
             MAX_X = 4.0
             x_label = "PEG Ratio (Growth Value)"
@@ -363,9 +361,9 @@ if st.session_state["market_data"] is not None:
             fig.update_layout(height=500, xaxis_rangeslider_visible=False)
             st.plotly_chart(fig, use_container_width=True)
 
-# --- MARKET ANALYSIS ---
+    # --- MARKET ANALYSIS TABLE ---
     st.divider()
-    st.subheader("2. Market Data Analysis")
+    st.subheader("5. Market Data Analysis")
     st.dataframe(
         df_market[["Ticker", "Sector", metric_col, "RSI", "Return", "Volatility"]].style.format({
             metric_col: "{:.2f}", "RSI": "{:.2f}", "Return": "{:.2%}", "Volatility": "{:.2%}"
@@ -386,8 +384,7 @@ with st.expander("ℹ️ How the Optimization Logic Works"):
     \text{Score} = \underbrace{\left( \frac{\text{RSI}}{100} \right)}_{\text{Momentum}} + \underbrace{\left( \frac{1}{\text{PEG Ratio}} \right)}_{\text{Value}}
     $$
 
-    ### 2. This app uses an open source Linear Solver (Google - OR Tools).  
-    * ** We maximize factor exposure ($RSI + Value$) using Linear Programming ($O(n)$) rather than minimizing variance via Quadratic Programming ($O(n^2)$). Risk is managed via concentration constraints rather than historical covariance, avoiding estimation errors common in small samples.
-    * **Quadratic Programming (MPT):** Modern Portfolio Theory typically employs Quadratic Programming to minimize portfolio variance ($\sigma^2$). This requires calculating the full covariance matrix $\Sigma$ to account for pairwise asset correlations ($O(n^2)$ complexity). It optimizes for the lowest risk at a given return level.
+    ### 2. Linear vs. Quadratic Optimization 
     * **Linear Programming (Factor Exposure):** This tool utilizes Linear Programming (GLOP solver) to maximize direct factor exposure. Instead of minimizing variance through correlation, we mitigate risk via **concentration constraints** (hard limits on max allocation). This allows for a computationally efficient ($O(n)$) maximization of the 'Growth + Momentum' alpha score without the instability often introduced by covariance estimation errors in small samples.
+    * **Quadratic Programming (MPT):** Modern Portfolio Theory typically employs Quadratic Programming to minimize portfolio variance ($\sigma^2$). This requires calculating the full covariance matrix $\Sigma$ to account for pairwise asset correlations ($O(n^2)$ complexity). It optimizes for the lowest risk at a given return level.
     """)
