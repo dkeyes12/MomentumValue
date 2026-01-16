@@ -228,39 +228,46 @@ with st.sidebar:
         clear_cache_callback()
         st.rerun()
 
-# 2. EDITABLE INPUT
+# 2. EDITABLE STOCK INPUT
 st.subheader(f"1. Define Universe: {mode_select}")
 
-# Load default based on mode
-current_defaults = STOCK_TICKERS if mode_select == "Stock (PEG)" else ETF_TICKERS
-
-# Session State for Editable DF
-if "user_tickers" not in st.session_state or st.session_state.get("last_mode") != mode_select:
-    st.session_state["user_tickers"] = pd.DataFrame(current_defaults)
-    st.session_state["last_mode"] = mode_select
+# --- FIX: LOGIC TO SWAP DEFAULTS ---
+# Check if the mode changed. If yes, overwrite the table data with the new defaults.
+if "last_mode" not in st.session_state or st.session_state["last_mode"] != mode_select:
+    # Load the correct list based on the toggle
+    new_defaults = STOCK_TICKERS if mode_select == "Stock (PEG)" else ETF_TICKERS
+    st.session_state["user_tickers"] = pd.DataFrame(new_defaults)
+    st.session_state["last_mode"] = mode_select  # Remember the new mode
 
 col_input, col_action = st.columns([3, 1])
+
 with col_input:
+    # --- FIX: DYNAMIC WIDGET KEY ---
+    # We change the key=... to include the mode name. 
+    # This forces Streamlit to destroy the old table and build a fresh one.
     edited_df = st.data_editor(
         st.session_state["user_tickers"], 
         column_config={
-            "Ticker": st.column_config.TextColumn("Ticker", width="small"),
+            "Ticker": st.column_config.TextColumn("Ticker", width="small", help="Symbol"),
             "Sector": st.column_config.TextColumn("Sector", width="medium"),
         },
-        num_rows="dynamic", use_container_width=True, key="ticker_editor"
+        num_rows="dynamic", 
+        use_container_width=True,
+        key=f"editor_{mode_select}"  # <--- THIS IS THE KEY FIX
     )
 
 with col_action:
     st.write("### ") 
     if st.button("🚀 Run Optimization", type="primary", use_container_width=True):
-        tickers = edited_df["Ticker"].tolist()
-        sector_map = dict(zip(edited_df['Ticker'], edited_df['Sector']))
         
+        tickers = edited_df["Ticker"].tolist()
+        sector_mapping = dict(zip(edited_df['Ticker'], edited_df['Sector']))
+
         if len(tickers) < 2:
-            st.error("Need 2+ tickers.")
+            st.error("Please enter at least 2 tickers.")
         else:
-            with st.spinner("Fetching data..."):
-                df_mkt, hist_data = process_bulk_data(tickers, sector_map, mode_select)
+            with st.spinner("Fetching data (PEG & History)..."):
+                df_mkt, hist_data = process_bulk_data(tickers, sector_mapping, mode_select)
                 
                 if df_mkt is not None and not df_mkt.empty:
                     df_res = optimize_portfolio(df_mkt, obj_choice, max_concentration, mode_select)
@@ -268,7 +275,7 @@ with col_action:
                     st.session_state["historical_data"] = hist_data
                     st.session_state["opt_results"] = df_res
                 else:
-                    st.error("Data fetch failed.")
+                    st.error("Could not fetch valid data. Try individual stocks instead of ETFs.")
 
 # CSS centering
 st.markdown("""<style>[data-testid="stDataFrame"] th, [data-testid="stDataFrame"] td { text-align: center !important; }</style>""", unsafe_allow_html=True)
