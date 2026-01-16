@@ -35,6 +35,7 @@ This is a multi-page Streamlit app with the following structure:
 
 - **Main Dashboard** (`streamlit_app.py`): Individual stock momentum analysis with P/E vs RSI quadrant plots and technical charts.
 - **Portfolio Optimizer** (`pages/PortfolioOptimizer.py`): Sector-based portfolio optimization using linear programming to balance value and momentum across ETFs.
+- **PEG & Momentum Optimizer** (`pages/PortfolioOptimizer - PEG.py`): Advanced portfolio optimization incorporating PEG ratios (Price/Earnings to Growth) for growth-adjusted value analysis.
 
 **Dependencies**: `streamlit`, `yfinance`, `pandas`, `numpy`, `ortools`, `plotly`, `matplotlib` (see `requirements.txt`).
 
@@ -57,14 +58,21 @@ This is a multi-page Streamlit app with the following structure:
 - Portfolio allocation tables with weighted P/E and RSI calculations
 - Deep-dive technical analysis for individual holdings
 
+### 3. PEG & Momentum Optimizer
+- Advanced portfolio optimization incorporating PEG ratios for growth-adjusted valuation
+- Combines Price/Earnings to Growth analysis with momentum indicators
+- Focuses on individual stocks rather than ETFs for better PEG data availability
+- Uses the same optimization framework with enhanced value metrics
+
 ---
 
 ## Important notes & gotchas ⚠️
 
-- yfinance can return empty DataFrames or omit fields in `.info` (e.g., `trailingPE`). The app falls back to `forwardPE` when `trailingPE` is missing.
+- yfinance can return empty DataFrames or omit fields in `.info` (e.g., `trailingPE`, `pegRatio`). The app falls back to `forwardPE` when `trailingPE` is missing, and filters out stocks without valid PEG data in the PEG optimizer.
 - `RSI` is computed using the user-selected source (`Close`, `Open`, `High`, `Low`) from the sidebar. If you add new sources (e.g., VWAP), compute and add the column inside `get_stock_data()` before calculating RSI.
 - Portfolio optimization uses OR-Tools linear solver; ensure sufficient data points for reliable results.
 - The main entry point is `streamlit_app.py` — Streamlit automatically discovers pages in the `pages/` folder.
+- PEG data is typically only available for individual stocks, not ETFs, which is why the PEG optimizer uses a stock universe instead of sector ETFs.
 
 ---
 
@@ -72,14 +80,14 @@ This is a multi-page Streamlit app with the following structure:
 
 - Streamlit auto-reloads on save — make small iterative edits to `streamlit_app.py` or files in `pages/` and watch the UI refresh.
 - Use `st.warning`, `st.error`, and `st.spinner` when adding new network-dependent features so failures surface gracefully.
-- Session state is used in the Portfolio Optimizer to persist optimization results across interactions.
+- Session state is used in the Portfolio Optimizers to persist optimization results across interactions.
 
 ### Adding indicators
 
-Add calculations inside `get_stock_data()` (in both files) and assign descriptive column names (e.g., `VWAP`, `SMA_20`). Example (not production-accurate VWAP):
+Add calculations inside `get_stock_data()` (main dashboard) or `process_bulk_data()` (portfolio optimizers) and assign descriptive column names (e.g., `VWAP`, `SMA_20`). Example (not production-accurate VWAP):
 
 ```python
-# inside get_stock_data(df):
+# inside get_stock_data() or process_bulk_data():
 df['typical'] = (df['High'] + df['Low'] + df['Close']) / 3
 df['VWAP'] = (df['typical'] * df['Volume']).cumsum() / df['Volume'].cumsum()
 ```
@@ -88,7 +96,7 @@ df['VWAP'] = (df['typical'] * df['Volume']).cumsum() / df['Volume'].cumsum()
 
 ## Testing & CI suggestions (no tests currently) 🧪
 
-- There are no unit tests yet. Suggested first targets: `calculate_rsi()` and `determine_signal()` in both apps.
+- There are no unit tests yet. Suggested first targets: `calculate_rsi()` and `determine_signal()` in the main dashboard, and `optimize_portfolio()` functions in the optimizer pages.
 - Add `pytest` as a dev dependency and place tests under `tests/`.
 - Example test command after adding pytest:
 
