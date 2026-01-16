@@ -315,7 +315,7 @@ if st.session_state["market_data"] is not None:
     if df_opt is not None and not df_opt.empty:
         # --- PLOT ---
         st.subheader("2. Portfolio Analysis")
-        
+        RSI_THRESHOLD = 50
         # --- DYNAMIC SCALING LOGIC (Fix for P/E Fallback) ---
         # Detect if we are looking at PEG (usually < 5) or P/E (usually > 10)
         data_median = df_market[metric_col].median()
