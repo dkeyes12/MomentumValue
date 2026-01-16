@@ -66,18 +66,29 @@ def process_bulk_data(tickers, sector_map, mode, period="2y"):
     """
     Fetches data. 
     mode="ETF" -> Fetches P/E
-    mode="Stock" -> Fetches PEG
+    mode="Stock" -> Fetches PEG (Falls back to P/E if missing)
     """
+    import time # Import time to handle rate limiting
+    
     ticker_list = [t.upper().strip() for t in tickers if t.strip()]
     if not ticker_list: return None, None
 
-    # Bulk download
+    # Bulk download history (Fast)
     bulk_data = yf.download(ticker_list, period=period, group_by='ticker', auto_adjust=False)
     
     snapshot_data = []
     hist_data = {}
 
-    for t in ticker_list:
+    # Create a placeholder for progress
+    progress_text = "Fetching valuation metrics..."
+    my_bar = st.progress(0, text=progress_text)
+    
+    total_tickers = len(ticker_list)
+
+    for idx, t in enumerate(ticker_list):
+        # Update progress bar
+        my_bar.progress((idx + 1) / total_tickers, text=f"Fetching data for {t}...")
+        
         try:
             # Handle yfinance multi-index structure
             if len(ticker_list) == 1:
@@ -102,19 +113,34 @@ def process_bulk_data(tickers, sector_map, mode, period="2y"):
             rsi = df['RSI'].iloc[-1]
             volatility = df['Close'].pct_change().std() * np.sqrt(252)
             
-            # --- CONDITIONAL VALUATION METRIC ---
+            # --- ROBUST VALUATION FETCHING ---
             val_metric = None
             try:
-                stock_info = yf.Ticker(t).info
+                stock = yf.Ticker(t)
+                stock_info = stock.info
+                
                 if mode == "Popular and widely followed stocks (P/E/G)":
+                    # Try PEG first
                     val_metric = stock_info.get('pegRatio')
-                else: # ETF (PE)
+                    
+                    # FALLBACK: If PEG is missing/None, use Trailing P/E
+                    if val_metric is None:
+                        val_metric = stock_info.get('trailingPE')
+                        # If Trailing is missing, use Forward P/E
+                        if val_metric is None:
+                            val_metric = stock_info.get('forwardPE')
+                
+                else: # ETF (P/E)
                     val_metric = stock_info.get('trailingPE')
                     if val_metric is None: val_metric = stock_info.get('forwardPE')
-            except:
+                
+                # Small sleep to prevent Yahoo from blocking us (Rate Limiting)
+                time.sleep(0.1)
+                
+            except Exception as e:
                 val_metric = None
             
-            # Store if valid
+            # Final Validity Check
             if val_metric is not None and val_metric > 0:
                 row = {
                     "Ticker": t,
@@ -124,20 +150,27 @@ def process_bulk_data(tickers, sector_map, mode, period="2y"):
                     "Volatility": volatility,
                     "Return": pct_return
                 }
-                # Assign to correct column based on mode
+                
                 if mode == "Popular and widely followed stocks (P/E/G)":
                     row["PEG"] = val_metric
-                    row["PE"] = np.nan # Placeholder
+                    row["PE"] = np.nan 
                 else:
                     row["PE"] = val_metric
-                    row["PEG"] = np.nan # Placeholder
+                    row["PEG"] = np.nan 
                     
                 snapshot_data.append(row)
+            else:
+                # Optional: log which tickers failed to have data
+                print(f"Skipping {t}: No valid valuation metric found.")
 
-        except Exception:
+        except Exception as e:
             continue
+    
+    # Clear progress bar
+    my_bar.empty()
             
     return pd.DataFrame(snapshot_data), hist_data
+
 
 # --- OPTIMIZATION ENGINE ---
 def optimize_portfolio(df, objective_type, max_weight_per_asset, mode):
