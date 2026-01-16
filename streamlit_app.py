@@ -366,13 +366,21 @@ if st.session_state["market_data"] is not None:
         fig_quad.update_layout(title=f"{mode_select} Analysis", height=600)
         st.plotly_chart(fig_quad, use_container_width=True)
 
-        # --- ALLOCATION TABLE ---
+# --- EXPLANATION & ALLOCATION TABLE ---
         st.divider()
-        st.subheader("3. Optimal Allocation")
+        st.subheader("3. Optimal Portfolio Allocation")
         
-        with st.expander("📊 Methodology"):
-            st.write(f"Uses Linear Programming. Aggregates calculated via Weighted Arithmetic Mean (RSI) and Weighted Harmonic Mean ({metric_col}).")
-        
+        with st.expander("📊 Strategy Breakdown: Allocation Methodology"):
+            st.markdown("""
+            This model employs a multi-factor approach, optimizing for **Earnings Yield** (Value) and **Relative Strength** (Momentum) under strict variance constraints.
+            
+            * **Weighting:** The optimal capital allocation coefficient derived from the linear optimization solver.
+            * **RSI (Momentum Factor):** The portfolio RSI is the **Weighted Arithmetic Mean** of individual constituents, targeting assets with established uptrends (>50).
+            
+            **Note on P/E Calculation (Harmonic Mean):**
+            For the Portfolio P/E, we utilize the **Weighted Harmonic Mean** rather than a simple arithmetic average. 
+            * *Rationale:* P/E is a ratio of Price to Earnings. Averaging ratios directly can be mathematically misleading due to outliers. The Harmonic Mean correctly averages the underlying "Earnings Yields" (E/P) and inverts the result, providing a true reflection of the portfolio's aggregate valuation.
+            """)
         disp_df = df_opt[["Ticker", "Sector", "Weight", metric_col, "RSI"]].copy()
         
         # Totals
