@@ -153,7 +153,7 @@ def optimize_portfolio(df, objective_type, max_weight_per_asset):
         return pd.DataFrame()
 
 # --- DASHBOARD UI ---
-st.title("⚖️ Sector Rotation Optimizer")
+st.title("⚖️ Portfolio Optimizer -- MomentumValue")
 
 # 1. SIDEBAR
 with st.sidebar:
