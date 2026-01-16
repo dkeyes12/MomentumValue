@@ -4,7 +4,7 @@ import pandas as pd
 import numpy as np
 from ortools.linear_solver import pywraplp
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots  # Required for the new chart
+from plotly.subplots import make_subplots
 
 # --- CONFIGURATION ---
 st.set_page_config(page_title="Sector Portfolio Optimizer", layout="wide")
@@ -187,7 +187,7 @@ if run_optimization:
 
             if not df_opt.empty:
                 
-                # --- [MOVED FIRST] VISUALIZATION: SYMMETRIC 2x2 PLOT ---
+                # --- VISUALIZATION: SYMMETRIC 2x2 PLOT ---
                 st.subheader("2. Portfolio Analysis (Value vs Momentum)")
                 
                 PE_THRESHOLD = 25  
@@ -243,8 +243,22 @@ if run_optimization:
 
                 st.plotly_chart(fig_quad, use_container_width=True)
 
-                # --- OPTIMAL ALLOCATION TABLE ---
-                st.write("### Optimal Allocation")
+                # --- EXPLANATION & ALLOCATION TABLE ---
+                st.divider()
+                st.subheader("3. Optimal Portfolio Allocation")
+                
+                with st.expander("📊 Strategy Breakdown: Allocation Methodology"):
+                    st.markdown("""
+                    This model employs a multi-factor approach, optimizing for **Earnings Yield** (Value) and **Relative Strength** (Momentum) under the constraints of sum of weights is 100%.
+                    
+                    * **Weighting:** The optimal amount to allocate as computed from the (linear optimization) solver.
+                    * **Diversification:** Constraints are applied to mitigate idiosyncratic risk, ensuring no single sector exceeds the user-defined concentration limit.
+                    * **P/E Ratio (Value Factor):** Utilized here as a proxy for valuation. Lower multiples suggest higher earnings yield, enhancing the 'Value' component of the composite score.
+                    * **RSI (Momentum Factor):** Serves as a technical proxy for trend strength. Relative Strength Index values >50 contribute positively to the 'Momentum' component, targeting assets with established uptrends.
+                    
+                    **Objective:** The solver allocates capital to maximize the combined factor exposure (Value + Momentum) while adhering to the maximum sector concentration limits.
+                    """)
+
                 display_df = df_opt[["Ticker", "Weight", "PE", "RSI"]].copy()
                 display_df["Weight"] = display_df["Weight"].apply(lambda x: f"{x:.1%}")
                 display_df["PE"] = display_df["PE"].apply(lambda x: f"{x:.1f}")
@@ -252,22 +266,20 @@ if run_optimization:
                 
                 st.dataframe(display_df, use_container_width=False)
                 
-                # --- TECHNICAL ANALYSIS (Replaces Market Data Table) ---
+                # --- TECHNICAL ANALYSIS ---
                 st.divider()
-                st.subheader("3. Technical Analysis")
+                st.subheader("4. Technical Analysis (Deep Dive)")
                 
-                # Selectbox to pick which stock to view
                 col_sel, _ = st.columns([1, 3])
                 with col_sel:
                     chart_ticker = st.selectbox("Select Asset to View:", ticker_list)
                 
-                rsi_source = "Close" # Default for chart
+                rsi_source = "Close" 
                 
                 with st.spinner(f"Loading chart for {chart_ticker}..."):
                     df_chart = get_chart_data(chart_ticker)
                 
                 if df_chart is not None:
-                    # --- USER'S CHART LOGIC ---
                     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, 
                             vertical_spacing=0.05, row_heights=[0.7, 0.3])
 
