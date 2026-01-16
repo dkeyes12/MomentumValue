@@ -1,4 +1,7 @@
 streamlit
-pandas
-plotly
 yfinance
+pandas
+numpy 
+ortools
+plotly
+matplotlib
