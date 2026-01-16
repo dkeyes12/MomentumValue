@@ -7,18 +7,10 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 # --- CONFIGURATION ---
-st.set_page_config(page_title="Portfolio Optimizer -- MomentumValue", layout="wide")
+st.set_page_config(page_title="Portfolio Optimizer (Dual Mode)", layout="wide")
 
-# --- INITIALIZE SESSION STATE ---
-if "opt_results" not in st.session_state:
-    st.session_state["opt_results"] = None
-if "market_data" not in st.session_state:
-    st.session_state["market_data"] = None
-if "historical_data" not in st.session_state:
-    st.session_state["historical_data"] = {}
-
-# --- S&P 500 SECTOR UNIVERSE ---
-DEFAULT_TICKERS = [
+# --- DATASETS ---
+ETF_TICKERS = [
     {"Ticker": "XLK", "Sector": "Technology"},
     {"Ticker": "XLV", "Sector": "Health Care"},
     {"Ticker": "XLF", "Sector": "Financials"},
@@ -32,6 +24,37 @@ DEFAULT_TICKERS = [
     {"Ticker": "XLC", "Sector": "Communication"}
 ]
 
+STOCK_TICKERS = [
+    {"Ticker": "NVDA", "Sector": "Technology"},
+    {"Ticker": "AAPL", "Sector": "Technology"},
+    {"Ticker": "MSFT", "Sector": "Technology"},
+    {"Ticker": "AMZN", "Sector": "Cons. Disc."},
+    {"Ticker": "GOOGL", "Sector": "Comm. Svcs"},
+    {"Ticker": "META", "Sector": "Comm. Svcs"},
+    {"Ticker": "TSLA", "Sector": "Cons. Disc."},
+    {"Ticker": "JPM", "Sector": "Financials"},
+    {"Ticker": "V", "Sector": "Financials"},
+    {"Ticker": "JNJ", "Sector": "Health Care"},
+    {"Ticker": "LLY", "Sector": "Health Care"},
+    {"Ticker": "XOM", "Sector": "Energy"}
+]
+
+# --- CACHE MANAGEMENT ---
+def clear_cache_callback():
+    """Forces a complete reset of cache and state when switching modes"""
+    st.cache_data.clear()
+    if "market_data" in st.session_state:
+        del st.session_state["market_data"]
+    if "opt_results" in st.session_state:
+        del st.session_state["opt_results"]
+    if "historical_data" in st.session_state:
+        del st.session_state["historical_data"]
+
+# --- INITIALIZE STATE ---
+if "market_data" not in st.session_state: st.session_state["market_data"] = None
+if "opt_results" not in st.session_state: st.session_state["opt_results"] = None
+if "historical_data" not in st.session_state: st.session_state["historical_data"] = {}
+
 # --- HELPER FUNCTIONS ---
 def calculate_rsi(series, window=14):
     delta = series.diff()
@@ -40,14 +63,15 @@ def calculate_rsi(series, window=14):
     rs = gain / loss
     return 100 - (100 / (1 + rs))
 
-def process_bulk_data(tickers, sector_map, period="2y"):
+@st.cache_data
+def process_bulk_data(tickers, sector_map, mode, period="2y"):
     """
-    Fetches ALL data at once and maps sectors.
+    Fetches data. 
+    mode="ETF" -> Fetches P/E
+    mode="Stock" -> Fetches PEG
     """
     ticker_list = [t.upper().strip() for t in tickers if t.strip()]
-    
-    if not ticker_list:
-        return None, None
+    if not ticker_list: return None, None
 
     # Bulk download
     bulk_data = yf.download(ticker_list, period=period, group_by='ticker', auto_adjust=False)
@@ -57,7 +81,7 @@ def process_bulk_data(tickers, sector_map, period="2y"):
 
     for t in ticker_list:
         try:
-            # Handle Single Ticker vs Multi-Ticker structure
+            # Handle yfinance multi-index structure
             if len(ticker_list) == 1:
                 df = bulk_data.copy()
             else:
@@ -75,38 +99,50 @@ def process_bulk_data(tickers, sector_map, period="2y"):
             # Metrics
             current_price = df['Close'].iloc[-1]
             start_price = df['Close'].iloc[0]
-            
-            # FIX: Calculate Return
             pct_return = (current_price - start_price) / start_price if start_price > 0 else 0
             
             rsi = df['RSI'].iloc[-1]
             volatility = df['Close'].pct_change().std() * np.sqrt(252)
             
-            # Fetch PE
+            # --- CONDITIONAL VALUATION METRIC ---
+            val_metric = None
             try:
                 stock_info = yf.Ticker(t).info
-                pe = stock_info.get('trailingPE')
-                if pe is None: pe = stock_info.get('forwardPE')
+                if mode == "Stock (PEG)":
+                    val_metric = stock_info.get('pegRatio')
+                else: # ETF (PE)
+                    val_metric = stock_info.get('trailingPE')
+                    if val_metric is None: val_metric = stock_info.get('forwardPE')
             except:
-                pe = None
+                val_metric = None
             
-            if pe is not None and pe > 0:
-                snapshot_data.append({
+            # Store if valid
+            if val_metric is not None and val_metric > 0:
+                row = {
                     "Ticker": t,
                     "Sector": sector_map.get(t, "Unknown"),
                     "Price": current_price,
-                    "PE": pe,
                     "RSI": rsi,
                     "Volatility": volatility,
-                    "Return": pct_return  # <--- Added this back
-                })
+                    "Return": pct_return
+                }
+                # Assign to correct column based on mode
+                if mode == "Stock (PEG)":
+                    row["PEG"] = val_metric
+                    row["PE"] = np.nan # Placeholder
+                else:
+                    row["PE"] = val_metric
+                    row["PEG"] = np.nan # Placeholder
+                    
+                snapshot_data.append(row)
+
         except Exception:
             continue
             
     return pd.DataFrame(snapshot_data), hist_data
 
 # --- OPTIMIZATION ENGINE ---
-def optimize_portfolio(df, objective_type, max_weight_per_asset):
+def optimize_portfolio(df, objective_type, max_weight_per_asset, mode):
     solver = pywraplp.Solver.CreateSolver('GLOP')
     if not solver: return None
 
@@ -119,7 +155,14 @@ def optimize_portfolio(df, objective_type, max_weight_per_asset):
         constraint_sum.SetCoefficient(w, 1)
 
     objective = solver.Objective()
-    scores = (df['RSI'] / 100) + ((1 / df['PE']) * 50) 
+    
+    # --- ADAPTIVE SCORING ---
+    if mode == "Stock (PEG)":
+        # Score = (RSI / 100) + (1 / PEG)
+        scores = (df['RSI'] / 100) + (1 / df['PEG']) 
+    else:
+        # Score = (RSI / 100) + (1 / PE * 50)
+        scores = (df['RSI'] / 100) + ((1 / df['PE']) * 50)
     
     if objective_type == "Maximize Gain (Score)":
         for i, w in enumerate(weights):
@@ -140,233 +183,184 @@ def optimize_portfolio(df, objective_type, max_weight_per_asset):
         results = []
         for i, w in enumerate(weights):
             if w.solution_value() > 0.001: 
-                results.append({
+                row = {
                     "Ticker": df['Ticker'].iloc[i],
                     "Sector": df['Sector'].iloc[i],
                     "Weight": w.solution_value(),
                     "RSI": df['RSI'].iloc[i],
-                    "PE": df['PE'].iloc[i],
                     "Volatility": df['Volatility'].iloc[i]
-                })
+                }
+                if mode == "Stock (PEG)":
+                    row["PEG"] = df['PEG'].iloc[i]
+                else:
+                    row["PE"] = df['PE'].iloc[i]
+                results.append(row)
         return pd.DataFrame(results)
     else:
         return pd.DataFrame()
 
 # --- DASHBOARD UI ---
-st.title("⚖️ Portfolio Optimizer: Maximize MomentumValue ")
+st.title("⚖️ Portfolio Optimizer (Dual Mode)")
 
-# 1. SIDEBAR
+# 1. SIDEBAR SETTINGS
 with st.sidebar:
-    st.header("Settings")
+    st.header("1. Universe Selection")
+    
+    # TRIGGER CACHE CLEAR ON CHANGE
+    mode_select = st.radio(
+        "Select Strategy:", 
+        ["S&P 500 Sectors (PE)", "Stock (PEG)"], 
+        on_change=clear_cache_callback
+    )
+    
+    st.divider()
+    st.header("2. Optimization Settings")
     obj_choice = st.radio("Goal", ["Maximize Gain (Score)", "Minimize Loss (Volatility)"])
-    max_concentration = st.slider("Max Allocation per Sector", 0.05, 1.0, 0.25, 0.05)
-    st.info("Edit the table to add individual stocks or other ETFs.")
+    max_concentration = st.slider("Max Allocation per Asset", 0.05, 1.0, 0.25, 0.05)
+    
+    # Explicit Cache Button
+    st.divider()
+    if st.button("⚠️ Force Clear Cache"):
+        clear_cache_callback()
+        st.rerun()
 
-# 2. EDITABLE STOCK INPUT
-st.subheader("1. Define Universe")
+# 2. EDITABLE INPUT
+st.subheader(f"1. Define Universe: {mode_select}")
+
+# Load default based on mode
+current_defaults = STOCK_TICKERS if mode_select == "Stock (PEG)" else ETF_TICKERS
+
+# Session State for Editable DF
+if "user_tickers" not in st.session_state or st.session_state.get("last_mode") != mode_select:
+    st.session_state["user_tickers"] = pd.DataFrame(current_defaults)
+    st.session_state["last_mode"] = mode_select
+
 col_input, col_action = st.columns([3, 1])
-
 with col_input:
-    if "user_tickers" not in st.session_state:
-        st.session_state["user_tickers"] = pd.DataFrame(DEFAULT_TICKERS)
-
     edited_df = st.data_editor(
         st.session_state["user_tickers"], 
         column_config={
-            "Ticker": st.column_config.TextColumn("Ticker", width="small", help="Symbol"),
+            "Ticker": st.column_config.TextColumn("Ticker", width="small"),
             "Sector": st.column_config.TextColumn("Sector", width="medium"),
         },
-        num_rows="dynamic", 
-        use_container_width=True,
-        key="ticker_editor"
+        num_rows="dynamic", use_container_width=True, key="ticker_editor"
     )
 
 with col_action:
     st.write("### ") 
     if st.button("🚀 Run Optimization", type="primary", use_container_width=True):
-        
         tickers = edited_df["Ticker"].tolist()
-        # Create map for Sectors
-        sector_mapping = dict(zip(edited_df['Ticker'], edited_df['Sector']))
-
+        sector_map = dict(zip(edited_df['Ticker'], edited_df['Sector']))
+        
         if len(tickers) < 2:
-            st.error("Please enter at least 2 tickers.")
+            st.error("Need 2+ tickers.")
         else:
-            with st.spinner("Fetching historical data and optimizing..."):
-                # 1. Fetch ALL data (Snapshot + History)
-                df_mkt, hist_data = process_bulk_data(tickers, sector_mapping)
+            with st.spinner("Fetching data..."):
+                df_mkt, hist_data = process_bulk_data(tickers, sector_map, mode_select)
                 
                 if df_mkt is not None and not df_mkt.empty:
-                    # 2. Run Optimization
-                    df_res = optimize_portfolio(df_mkt, obj_choice, max_concentration)
-                    
-                    # 3. Store in Session State
+                    df_res = optimize_portfolio(df_mkt, obj_choice, max_concentration, mode_select)
                     st.session_state["market_data"] = df_mkt
                     st.session_state["historical_data"] = hist_data
                     st.session_state["opt_results"] = df_res
                 else:
-                    st.error("Could not fetch data. Check tickers.")
+                    st.error("Data fetch failed.")
 
-# --- CSS for centering ---
-st.markdown("""
-<style>
-    [data-testid="stDataFrame"] th { text-align: center !important; }
-    [data-testid="stDataFrame"] td { text-align: center !important; }
-</style>
-""", unsafe_allow_html=True)
+# CSS centering
+st.markdown("""<style>[data-testid="stDataFrame"] th, [data-testid="stDataFrame"] td { text-align: center !important; }</style>""", unsafe_allow_html=True)
 
-# 3. MAIN EXECUTION (Check Session State)
+# 3. EXECUTION
 if st.session_state["market_data"] is not None:
-    
     df_market = st.session_state["market_data"]
     df_opt = st.session_state["opt_results"]
     hist_map = st.session_state["historical_data"]
+    
+    metric_col = "PEG" if mode_select == "Stock (PEG)" else "PE"
+
+    # --- MARKET ANALYSIS ---
+    st.divider()
+    st.subheader("2. Market Data Analysis")
+    st.dataframe(
+        df_market[["Ticker", "Sector", metric_col, "RSI", "Return", "Volatility"]].style.format({
+            metric_col: "{:.2f}", "RSI": "{:.2f}", "Return": "{:.2%}", "Volatility": "{:.2%}"
+        }),
+        use_container_width=True, height=(len(df_market)+1)*35
+    )
 
     if df_opt is not None and not df_opt.empty:
-        # --- VISUALIZATION ---
-        st.subheader("2. Portfolio Analysis (Value vs Momentum)")
+        # --- PLOT ---
+        st.subheader("2. Portfolio Analysis")
         
-        PE_THRESHOLD = 25  
-        RSI_THRESHOLD = 50
-        FIXED_MAX_X = PE_THRESHOLD * 2 
-
-        selected_tickers = df_opt['Ticker'].tolist()
-        df_remaining = df_market[~df_market['Ticker'].isin(selected_tickers)]
-
+        # Scaling Logic
+        if mode_select == "Stock (PEG)":
+            VAL_THRESHOLD = 1.5
+            MAX_X = 4.0
+            x_label = "PEG Ratio (Growth Value)"
+        else:
+            VAL_THRESHOLD = 25
+            MAX_X = 50
+            x_label = "P/E Ratio (Value)"
+            
         fig_quad = go.Figure()
+        
+        # Universe
+        remaining = df_market[~df_market['Ticker'].isin(df_opt['Ticker'])]
+        fig_quad.add_trace(go.Scatter(x=remaining[metric_col].clip(upper=MAX_X), y=remaining['RSI'],
+            mode='markers+text', text=remaining['Ticker'], textposition="top center",
+            textfont=dict(size=11, color="black"), marker=dict(size=12, color='rgba(128,128,128,0.5)', line=dict(width=1, color='dimgray')), name='Universe'))
 
-        # Plot Universe
-        fig_quad.add_trace(go.Scatter(
-            x=df_remaining['PE'].clip(upper=FIXED_MAX_X), 
-            y=df_remaining['RSI'],
-            mode='markers+text',
-            text=df_remaining['Ticker'],
-            textposition="top center",
-            textfont=dict(family="Arial", size=11, color="black"),
-            marker=dict(size=12, color='rgba(128, 128, 128, 0.5)', line=dict(width=1, color='dimgray')),
-            name='Universe'
-        ))
-
-        # Plot Portfolio
-        fig_quad.add_trace(go.Scatter(
-            x=df_opt['PE'].clip(upper=FIXED_MAX_X), 
-            y=df_opt['RSI'],
-            mode='markers+text',
-            text=df_opt['Ticker'],
-            textposition="top center",
-            textfont=dict(family="Arial Black", size=12, color="black"), 
-            marker=dict(size=18, color='blue', line=dict(width=2, color='black')),
-            name='Selected Portfolio'
-        ))
+        # Portfolio
+        fig_quad.add_trace(go.Scatter(x=df_opt[metric_col].clip(upper=MAX_X), y=df_opt['RSI'],
+            mode='markers+text', text=df_opt['Ticker'], textposition="top center",
+            textfont=dict(family="Arial Black", size=12, color="black"), marker=dict(size=18, color='blue', line=dict(width=2, color='black')), name='Selected'))
 
         # Backgrounds
-        fig_quad.add_shape(type="rect", x0=0, y0=RSI_THRESHOLD, x1=PE_THRESHOLD, y1=100, fillcolor="green", opacity=0.1, layer="below", line_width=0)
-        fig_quad.add_shape(type="rect", x0=PE_THRESHOLD, y0=RSI_THRESHOLD, x1=FIXED_MAX_X, y1=100, fillcolor="yellow", opacity=0.1, layer="below", line_width=0)
-        fig_quad.add_shape(type="rect", x0=0, y0=0, x1=PE_THRESHOLD, y1=RSI_THRESHOLD, fillcolor="yellow", opacity=0.1, layer="below", line_width=0)
-        fig_quad.add_shape(type="rect", x0=PE_THRESHOLD, y0=0, x1=FIXED_MAX_X, y1=RSI_THRESHOLD, fillcolor="red", opacity=0.1, layer="below", line_width=0)
+        fig_quad.add_shape(type="rect", x0=0, y0=50, x1=VAL_THRESHOLD, y1=100, fillcolor="green", opacity=0.1, layer="below", line_width=0)
+        fig_quad.add_shape(type="rect", x0=VAL_THRESHOLD, y0=50, x1=MAX_X, y1=100, fillcolor="yellow", opacity=0.1, layer="below", line_width=0)
+        fig_quad.add_shape(type="rect", x0=0, y0=0, x1=VAL_THRESHOLD, y1=50, fillcolor="yellow", opacity=0.1, layer="below", line_width=0)
+        fig_quad.add_shape(type="rect", x0=VAL_THRESHOLD, y0=0, x1=MAX_X, y1=50, fillcolor="red", opacity=0.1, layer="below", line_width=0)
 
-        # Annotations
-        fig_quad.add_vline(x=PE_THRESHOLD, line_width=1, line_dash="dash", line_color="gray")
-        fig_quad.add_hline(y=RSI_THRESHOLD, line_width=1, line_dash="dash", line_color="gray")
-        fig_quad.add_annotation(x=PE_THRESHOLD/2, y=90, text="VALUE + MOMENTUM", showarrow=False, font=dict(color="green", size=14, weight="bold"))
-        fig_quad.add_annotation(x=PE_THRESHOLD * 1.5, y=90, text="EXPENSIVE MOMENTUM", showarrow=False, font=dict(color="orange", size=10))
-        fig_quad.add_annotation(x=PE_THRESHOLD/2, y=10, text="WEAK / VALUE TRAP", showarrow=False, font=dict(color="orange", size=10))
-        fig_quad.add_annotation(x=PE_THRESHOLD * 1.5, y=10, text="EXPENSIVE & WEAK", showarrow=False, font=dict(color="red", size=14, weight="bold"))
-
-        fig_quad.update_xaxes(title_text="P/E Ratio (Value)", range=[0, FIXED_MAX_X])
-        fig_quad.update_yaxes(title_text="RSI (Momentum)", range=[0, 100])
-        fig_quad.update_layout(height=600, title="Market Universe & Selection")
-
+        fig_quad.update_layout(title=f"{mode_select} Analysis", xaxis_title=x_label, yaxis_title="RSI (Momentum)", height=600)
         st.plotly_chart(fig_quad, use_container_width=True)
 
         # --- ALLOCATION TABLE ---
         st.divider()
-        st.subheader("3. Optimal Portfolio Allocation")
+        st.subheader("3. Optimal Allocation")
         
-        with st.expander("📊 Strategy Breakdown: Allocation Methodology"):
-            st.markdown(r"""
-            This model employs a multi-factor approach, optimizing for **Earnings Yield** (Value) and **Relative Strength** (Momentum) under strict variance constraints.
-            
-            * **Weighting ($w$):** The optimal capital allocation coefficient derived from the linear optimization solver.
-            * **RSI (Weighted Arithmetic Mean):** The portfolio RSI is the linear weighted average of individual constituents. This represents the momentum 'center of mass' for the portfolio.
-                $$ \text{Portfolio RSI} = \sum (w_i \cdot RSI_i) $$
-            * **P/E Ratio (Weighted Harmonic Mean):** For the Portfolio P/E, we utilize the **Weighted Harmonic Mean** rather than a simple arithmetic average. 
-                $$ \text{Portfolio P/E} = \frac{1}{\sum (w_i \cdot \frac{1}{PE_i})} $$
-                *Rationale:* P/E is a ratio of Price to Earnings. Averaging ratios directly is mathematically incorrect. The Harmonic Mean correctly averages the underlying "Earnings Yields" (E/P) and inverts the result, providing a true reflection of the portfolio's aggregate valuation.
-            """)
-
-        # Add Sector to display columns
-        display_df = df_opt[["Ticker", "Sector", "Weight", "PE", "RSI"]].copy()
+        with st.expander("📊 Methodology"):
+            st.write(f"Uses Linear Programming. Aggregates calculated via Weighted Arithmetic Mean (RSI) and Weighted Harmonic Mean ({metric_col}).")
+        
+        disp_df = df_opt[["Ticker", "Sector", "Weight", metric_col, "RSI"]].copy()
         
         # Totals
-        weighted_rsi = (display_df['Weight'] * display_df['RSI']).sum()
-        weighted_earnings_yield = (display_df['Weight'] / display_df['PE']).sum()
-        portfolio_pe = 1 / weighted_earnings_yield if weighted_earnings_yield > 0 else 0
-
-        summary_row = pd.DataFrame([{
-            "Ticker": "PORTFOLIO TOTAL",
-            "Sector": "-",
-            "Weight": display_df['Weight'].sum(),
-            "PE": portfolio_pe,
-            "RSI": weighted_rsi
-        }])
-
-        final_table = pd.concat([display_df, summary_row], ignore_index=True)
-        final_table["Weight"] = final_table["Weight"].apply(lambda x: f"{x:.1%}")
-        final_table["PE"] = final_table["PE"].apply(lambda x: f"{x:.1f}")
-        final_table["RSI"] = final_table["RSI"].apply(lambda x: f"{x:.1f}")
+        w_rsi = (disp_df['Weight'] * disp_df['RSI']).sum()
+        w_val_inv = (disp_df['Weight'] / disp_df[metric_col]).sum()
+        w_val = 1 / w_val_inv if w_val_inv > 0 else 0
         
-        height_allocation = (len(final_table) + 1) * 35
-        st.dataframe(final_table, use_container_width=True, height=height_allocation)
+        summary = pd.DataFrame([{"Ticker": "TOTAL", "Sector": "-", "Weight": disp_df['Weight'].sum(), metric_col: w_val, "RSI": w_rsi}])
+        final = pd.concat([disp_df, summary], ignore_index=True)
         
-        # --- TECHNICAL ANALYSIS ---
+        final["Weight"] = final["Weight"].apply(lambda x: f"{x:.1%}")
+        final[metric_col] = final[metric_col].apply(lambda x: f"{x:.2f}")
+        final["RSI"] = final["RSI"].apply(lambda x: f"{x:.1f}")
+        
+        st.dataframe(final, use_container_width=True, height=(len(final)+1)*35)
+        
+        # --- CHART ---
         st.divider()
-        st.subheader("4. Technical Analysis (Deep Dive)")
+        st.subheader("4. Technical Analysis")
+        sel_t = st.selectbox("View Asset:", list(hist_map.keys()))
+        df_c = hist_map.get(sel_t)
         
-        col_sel, _ = st.columns([1, 3])
-        with col_sel:
-            chart_ticker = st.selectbox("Select Asset to View:", list(hist_map.keys()))
-        
-        df_chart = hist_map.get(chart_ticker)
-
-        if df_chart is not None:
-            fig = make_subplots(rows=2, cols=1, shared_xaxes=True, 
-                    vertical_spacing=0.05, row_heights=[0.7, 0.3])
-
-            fig.add_trace(go.Candlestick(x=df_chart.index,
-                                open=df_chart['Open'], high=df_chart['High'],
-                                low=df_chart['Low'], close=df_chart['Close'], name='OHLC'), row=1, col=1)
-            fig.add_trace(go.Scatter(x=df_chart.index, y=df_chart['SMA_50'], 
-                            line=dict(color='orange', width=2), name='50 Day MA'), row=1, col=1)
-            fig.add_trace(go.Scatter(x=df_chart.index, y=df_chart['SMA_200'], 
-                            line=dict(color='blue', width=2), name='200 Day MA'), row=1, col=1)
-
-            fig.add_trace(go.Scatter(x=df_chart.index, y=df_chart['RSI'], 
-                            line=dict(color='purple', width=2), name='RSI'), row=2, col=1)
+        if df_c is not None:
+            fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.7, 0.3])
+            fig.add_trace(go.Candlestick(x=df_c.index, open=df_c['Open'], high=df_c['High'], low=df_c['Low'], close=df_c['Close'], name='OHLC'), row=1, col=1)
+            fig.add_trace(go.Scatter(x=df_c.index, y=df_c['SMA_50'], line=dict(color='orange'), name='SMA 50'), row=1, col=1)
+            fig.add_trace(go.Scatter(x=df_c.index, y=df_c['RSI'], line=dict(color='purple'), name='RSI'), row=2, col=1)
             fig.add_hline(y=70, line_dash="dot", row=2, col=1, line_color="red")
             fig.add_hline(y=30, line_dash="dot", row=2, col=1, line_color="green")
-            fig.add_hline(y=50, line_dash="solid", row=2, col=1, line_color="gray", opacity=0.5)
-
-            fig.update_layout(xaxis_rangeslider_visible=False, height=600, margin=dict(l=20, r=20, t=30, b=20))
+            fig.update_layout(height=500, xaxis_rangeslider_visible=False)
             st.plotly_chart(fig, use_container_width=True)
-
-    else:
-        if st.session_state["market_data"] is not None:
-             st.error("Optimization failed to find a valid solution. Try increasing Max Allocation.")
-   
-    # --- MARKET ANALYSIS ---
-    st.divider()
-    st.subheader("2. Market Data Analysis")
-    height_universe = (len(df_market) + 1) * 35
-    
-    # Updated to display Return correctly
-    st.dataframe(
-        df_market[["Ticker", "Sector", "PE", "RSI", "Return", "Volatility"]].style.format({
-            "PE": "{:.2f}", "RSI": "{:.2f}", "Return": "{:.2%}", "Volatility": "{:.2%}"
-        }),
-        use_container_width=True,
-        height=height_universe
-    )
 
 # --- LOGIC SUMMARY ---
 st.divider()
@@ -381,7 +375,8 @@ with st.expander("ℹ️ How the Optimization Logic Works"):
     \text{Score} = \underbrace{\left( \frac{\text{RSI}}{100} \right)}_{\text{Momentum}} + \underbrace{\left( \frac{1}{\text{PEG Ratio}} \right)}_{\text{Value}}
     $$
 
-    ### 2. This app uses Open Source (Google) OR Tools' Linear Solver. Portfolio Optimization using Linear vs. Quadratic Optimization is much simpler and easier to understand: 
+    ### 2. This app uses Open Source (Google) OR Tools' Linear Solver.  
+    # **Linear Programming vs Quadratic (MPT):** We maximize factor exposure ($RSI + Value$) using Linear Programming ($O(n)$) rather than minimizing variance via Quadratic Programming ($O(n^2)$). Risk is managed via concentration constraints rather than historical covariance, avoiding estimation errors common in small samples.
     * **Quadratic Programming (MPT):** Modern Portfolio Theory typically employs Quadratic Programming to minimize portfolio variance ($\sigma^2$). This requires calculating the full covariance matrix $\Sigma$ to account for pairwise asset correlations ($O(n^2)$ complexity). It optimizes for the lowest risk at a given return level.
     * **Linear Programming (Factor Exposure):** This tool utilizes Linear Programming (GLOP solver) to maximize direct factor exposure. Instead of minimizing variance through correlation, we mitigate risk via **concentration constraints** (hard limits on max allocation). This allows for a computationally efficient ($O(n)$) maximization of the 'Growth + Momentum' alpha score without the instability often introduced by covariance estimation errors in small samples.
     """)
