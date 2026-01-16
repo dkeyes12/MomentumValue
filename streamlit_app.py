@@ -385,7 +385,8 @@ if st.session_state["market_data"] is not None:
     with st.expander("📊 Strategy Breakdown: Allocation Methodology"):
         st.markdown("""
         This model employs a multi-factor approach to assign optimal weights to invest into a basket of ETFs and/or stocks. 
-        Given the ETFs and/or stocks' **Relative Strength** (Momentum) and**Earnings Yield** (Value) optimization is used to assign a percentage allocation to maximize gain or minimize loss.
+        
+        Given the ETFs and/or stocks' **Relative Strength** (Momentum) and **Earnings Yield** (Value) optimization is used to assign a percentage allocation to maximize gain or minimize loss.
         
         * **Weighting:** The optimal capital allocation is derived via an (open source) linear optimization solver.
         * **RSI (Momentum Factor):** The portfolio RSI is the **Weighted Arithmetic Mean** of individual ETFs/stocks and is the metric establishing an ETF's uptrend (>50).
