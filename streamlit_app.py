@@ -384,10 +384,10 @@ if st.session_state["market_data"] is not None:
 
     with st.expander("📊 Strategy Breakdown: Allocation Methodology"):
         st.markdown("""
-        This model employs a multi-factor approach, optimizing for **Earnings Yield** (Value) and **Relative Strength** (Momentum) under strict variance constraints.
+        This model employs a multi-factor approach, optimizing for **Earnings Yield** (Value) and **Relative Strength** (Momentum).
         
-        * **Weighting:** The optimal capital allocation coefficient derived from the linear optimization solver.
-        * **RSI (Momentum Factor):** The portfolio RSI is the **Weighted Arithmetic Mean** of individual constituents, targeting assets with established uptrends (>50).
+        * **Weighting:** The optimal capital allocation is derived via an (open source) linear optimization solver.
+        * **RSI (Momentum Factor):** The portfolio RSI is the **Weighted Arithmetic Mean** of individual ETFs/stocks and is the metric establishing an ETF's uptrend (>50).
         
         **Note on P/E Calculation (Harmonic Mean):**
         For the Portfolio P/E, we utilize the **Weighted Harmonic Mean** rather than a simple arithmetic average. 
