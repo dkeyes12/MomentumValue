@@ -150,18 +150,20 @@ def optimize_portfolio(df, objective_type, max_weight_per_asset, mode):
     for i in range(len(df)):
         weights.append(solver.NumVar(0.0, max_weight_per_asset, f'w_{i}'))
 
+    # Constraint: Sum of weights = 1.0
     constraint_sum = solver.Constraint(1.0, 1.0)
     for w in weights:
         constraint_sum.SetCoefficient(w, 1)
 
     objective = solver.Objective()
     
-    # --- ADAPTIVE SCORING ---
+    # --- ADAPTIVE SCORING LOGIC ---
+    # Switches formula based on the selected mode
     if mode == "Stock (PEG)":
-        # Score = (RSI / 100) + (1 / PEG)
+        # PEG Score: 1/PEG + RSI/100 (No multiplier needed, scales are similar)
         scores = (df['RSI'] / 100) + (1 / df['PEG']) 
     else:
-        # Score = (RSI / 100) + (1 / PE * 50)
+        # PE Score: 1/PE * 50 + RSI/100 (Multiplier needed to match scales)
         scores = (df['RSI'] / 100) + ((1 / df['PE']) * 50)
     
     if objective_type == "Maximize Gain (Score)":
@@ -190,17 +192,19 @@ def optimize_portfolio(df, objective_type, max_weight_per_asset, mode):
                     "RSI": df['RSI'].iloc[i],
                     "Volatility": df['Volatility'].iloc[i]
                 }
+                # Add the correct valuation metric to the results
                 if mode == "Stock (PEG)":
                     row["PEG"] = df['PEG'].iloc[i]
                 else:
                     row["PE"] = df['PE'].iloc[i]
+                    
                 results.append(row)
         return pd.DataFrame(results)
     else:
         return pd.DataFrame()
 
 # --- DASHBOARD UI ---
-st.title("⚖️ Portfolio Optimizer: Within S&P500 ETF Sectors (or a Group of Stocks) Maximize MomentumValue]")
+st.title("⚖️ Portfolio Optimizer: Amongst S&P500 ETFs or stocks")
 
 # 1. SIDEBAR SETTINGS
 with st.sidebar:
