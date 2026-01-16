@@ -63,7 +63,7 @@ def calculate_rsi(series, window=14):
     return 100 - (100 / (1 + rs))
 
 @st.cache_data
-def process_bulk_data(tickers, sector_map, mode, period="5y"):
+def process_bulk_data(tickers, sector_map, mode, period="2y"):
     """
     Fetches data. 
     mode="ETF" -> Fetches P/E
@@ -100,7 +100,6 @@ def process_bulk_data(tickers, sector_map, mode, period="5y"):
             if df.empty: continue
 
             df = df.dropna(how='all')
-            # Calculate Moving Averages
             df['SMA_50'] = df['Close'].rolling(window=50).mean()
             df['SMA_200'] = df['Close'].rolling(window=200).mean()
             df['RSI'] = calculate_rsi(df['Close'])
@@ -378,24 +377,23 @@ if st.session_state["market_data"] is not None:
         fig_quad.update_layout(title=f"{mode_select} Analysis", height=600)
         st.plotly_chart(fig_quad, use_container_width=True)
 
-    # --- EXPLANATION & ALLOCATION TABLE ---
-    st.divider()
-    st.subheader("3. Optimal Portfolio Allocation")
+        # --- EXPLANATION (Methodology Only) ---
+        st.divider()
+        st.subheader("3. Optimal Portfolio Allocation")
+        
+        with st.expander("📊 Strategy Breakdown: Allocation Methodology"):
+            st.markdown("""
+            This model employs a multi-factor approach, optimizing for **Earnings Yield** (Value) and **Relative Strength** (Momentum) under strict variance constraints.
+            
+            * **Weighting:** The optimal capital allocation coefficient derived from the linear optimization solver.
+            * **RSI (Momentum Factor):** The portfolio RSI is the **Weighted Arithmetic Mean** of individual ETFs/stocks and is the metric establishing an ETF's uptrend (>50).
+            
+            **Note on P/E Calculation (Harmonic Mean):**
+            For the Portfolio P/E, we utilize the **Weighted Harmonic Mean** rather than a simple arithmetic average. 
+            * *Rationale:* P/E is a ratio of Price to Earnings. Averaging ratios directly can be mathematically misleading due to outliers. The Harmonic Mean correctly averages the underlying "Earnings Yields" (E/P) and inverts the result, providing a true reflection of the portfolio's aggregate valuation.
+            """)
 
-    with st.expander("📊 Strategy Breakdown: Allocation Methodology"):
-        st.markdown("""
-        This model employs a multi-factor approach to assign optimal weights to invest into a basket of ETFs and/or stocks. 
-        
-        Given the ETFs and/or stocks' **Relative Strength** (Momentum) and **Earnings Yield** (Value) optimization is used to assign the optimal percentage allocation to maximize gain or minimize loss.
-        
-        * **Weighting:** The optimal capital allocation is derived via an (open source) linear optimization solver.
-        * **RSI (Momentum Factor):** The portfolio RSI is the **Weighted Arithmetic Mean** of individual ETFs/stocks and is the metric establishing an ETF's uptrend (>50).
-        
-        **Note on P/E Calculation (Harmonic Mean):**
-        For the Portfolio P/E, we utilize the **Weighted Harmonic Mean** rather than a simple arithmetic average. 
-        * *Rationale:* P/E is a ratio of Price to Earnings. Averaging ratios directly can be mathematically misleading due to outliers. The Harmonic Mean correctly averages the underlying "Earnings Yields" (E/P) and inverts the result, providing a true reflection of the portfolio's aggregate valuation.
-        """)
-
+        # --- ALLOCATION TABLE (NOW OUTSIDE EXPANDER) ---
         disp_df = df_opt[["Ticker", "Sector", "Weight", metric_col, "RSI"]].copy()
         
         # Totals
@@ -412,7 +410,7 @@ if st.session_state["market_data"] is not None:
         
         st.dataframe(final, use_container_width=True, height=(len(final)+1)*35)
         
-        # --- CHART ---
+        # --- CHART (NOW OUTSIDE EXPANDER) ---
         st.divider()
         st.subheader("4. Technical Analysis")
         sel_t = st.selectbox("View Asset:", list(hist_map.keys()))
@@ -456,6 +454,8 @@ with st.expander("ℹ️ How the Optimization Logic Works"):
 
     ### 2. Linear vs. Quadratic Optimization 
     
+    
+
     * **Linear Programming (Factor Exposure):** This tool utilizes Linear Programming (GLOP solver) to maximize direct factor exposure. Instead of minimizing variance through correlation, we mitigate risk via **concentration constraints** (hard limits on max allocation). This allows for a computationally efficient ($O(n)$) maximization of the 'Growth + Momentum' alpha score without the instability often introduced by covariance estimation errors in small samples.
     * **Quadratic Programming (MPT):** Modern Portfolio Theory typically employs Quadratic Programming to minimize portfolio variance ($\sigma^2$). This requires calculating the full covariance matrix $\Sigma$ to account for pairwise asset correlations ($O(n^2)$ complexity). It optimizes for the lowest risk at a given return level.
     """)
