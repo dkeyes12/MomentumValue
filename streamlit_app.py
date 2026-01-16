@@ -63,12 +63,14 @@ def calculate_rsi(series, window=14):
     return 100 - (100 / (1 + rs))
 
 @st.cache_data
-def process_bulk_data(tickers, sector_map, mode, period="2y"):
+def process_bulk_data(tickers, sector_map, mode, period="5y"):
     """
     Fetches data. 
     mode="ETF" -> Fetches P/E
     mode="Stock" -> Fetches PEG (Falls back to P/E if missing)
     """
+    import time # Import time to handle rate limiting
+    
     ticker_list = [t.upper().strip() for t in tickers if t.strip()]
     if not ticker_list: return None, None
 
@@ -98,6 +100,7 @@ def process_bulk_data(tickers, sector_map, mode, period="2y"):
             if df.empty: continue
 
             df = df.dropna(how='all')
+            # Calculate Moving Averages
             df['SMA_50'] = df['Close'].rolling(window=50).mean()
             df['SMA_200'] = df['Close'].rolling(window=200).mean()
             df['RSI'] = calculate_rsi(df['Close'])
@@ -407,7 +410,10 @@ if st.session_state["market_data"] is not None:
         if df_c is not None:
             fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.7, 0.3])
             fig.add_trace(go.Candlestick(x=df_c.index, open=df_c['Open'], high=df_c['High'], low=df_c['Low'], close=df_c['Close'], name='OHLC'), row=1, col=1)
+            # --- ADDED: 50 & 200 SMA ---
             fig.add_trace(go.Scatter(x=df_c.index, y=df_c['SMA_50'], line=dict(color='orange'), name='SMA 50'), row=1, col=1)
+            fig.add_trace(go.Scatter(x=df_c.index, y=df_c['SMA_200'], line=dict(color='blue', width=2), name='SMA 200'), row=1, col=1)
+            
             fig.add_trace(go.Scatter(x=df_c.index, y=df_c['RSI'], line=dict(color='purple'), name='RSI'), row=2, col=1)
             fig.add_hline(y=70, line_dash="dot", row=2, col=1, line_color="red")
             fig.add_hline(y=30, line_dash="dot", row=2, col=1, line_color="green")
