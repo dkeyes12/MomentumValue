@@ -3,17 +3,24 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 from ortools.linear_solver import pywraplp
-import plotly.graph_objects as go 
+import plotly.graph_objects as go
 
 # --- CONFIGURATION ---
-st.set_page_config(page_title="OR-Tools Portfolio Optimizer", layout="wide")
+st.set_page_config(page_title="Sector Portfolio Optimizer", layout="wide")
 
-# Default Universe
+# --- UPDATED: S&P 500 SECTOR UNIVERSE ---
 DEFAULT_TICKERS = [
-    {"Ticker": "NVDA", "Sector": "Tech"}, {"Ticker": "AAPL", "Sector": "Tech"},
-    {"Ticker": "JPM", "Sector": "Finance"}, {"Ticker": "XOM", "Sector": "Energy"},
-    {"Ticker": "PG", "Sector": "Defensive"}, {"Ticker": "F", "Sector": "Industrial"},
-    {"Ticker": "TSLA", "Sector": "Auto"}, {"Ticker": "AMD", "Sector": "Tech"}
+    {"Ticker": "XLK", "Sector": "Technology"},
+    {"Ticker": "XLV", "Sector": "Health Care"},
+    {"Ticker": "XLF", "Sector": "Financials"},
+    {"Ticker": "XLRE", "Sector": "Real Estate"},
+    {"Ticker": "XLE", "Sector": "Energy"},
+    {"Ticker": "XLB", "Sector": "Materials"},
+    {"Ticker": "XLY", "Sector": "Cons. Discretionary"},
+    {"Ticker": "XLP", "Sector": "Cons. Staples"},
+    {"Ticker": "XLI", "Sector": "Industrials"},
+    {"Ticker": "XLU", "Sector": "Utilities"},
+    {"Ticker": "XLC", "Sector": "Communication"}
 ]
 
 # --- HELPER FUNCTIONS ---
@@ -48,6 +55,8 @@ def fetch_market_data(tickers, period="1y"):
                 pe = stock.info.get('trailingPE')
                 if pe is None: pe = stock.info.get('forwardPE')
                 
+                # Note: Some ETFs might not have P/E data in yfinance. 
+                # We include them if PE > 0.
                 if pe is not None and pe > 0:
                     data.append({
                         "Ticker": t,
@@ -108,17 +117,17 @@ def optimize_portfolio(df, objective_type, max_weight_per_asset):
         return pd.DataFrame()
 
 # --- DASHBOARD UI ---
-st.title("⚖️ MomentumValue Portfolio Optimizer")
+st.title("⚖️ Sector Rotation Optimizer")
 
 # 1. SIDEBAR
 with st.sidebar:
     st.header("Settings")
     obj_choice = st.radio("Goal", ["Maximize Gain (Score)", "Minimize Loss (Volatility)"])
-    max_concentration = st.slider("Max Allocation per Stock", 0.05, 1.0, 0.25, 0.05)
-    st.info("Edit the table to define your stock universe.")
+    max_concentration = st.slider("Max Allocation per Sector", 0.05, 1.0, 0.25, 0.05)
+    st.info("Edit the table to add individual stocks or other ETFs.")
 
 # 2. EDITABLE STOCK INPUT
-st.subheader("1. Define Stock Universe")
+st.subheader("1. Define Universe (S&P 500 Sectors)")
 col_input, col_action = st.columns([3, 1])
 
 with col_input:
@@ -128,7 +137,7 @@ with col_input:
     edited_df = st.data_editor(
         st.session_state["user_tickers"], 
         column_config={
-            "Ticker": st.column_config.TextColumn("Ticker", width="small", help="Stock Symbol"),
+            "Ticker": st.column_config.TextColumn("Ticker", width="small", help="Symbol"),
             "Sector": st.column_config.TextColumn("Sector", width="medium"),
         },
         num_rows="dynamic", 
@@ -140,38 +149,13 @@ with col_action:
     st.write("### ") 
     run_optimization = st.button("🚀 Run Optimization", type="primary", use_container_width=True)
 
-# --- LOGIC SUMMARY SECTION ---
-st.divider()
-with st.expander("ℹ️ How the Optimization Logic Works"):
-    st.markdown("""
-    ### 1. The Scoring Formula
-    The optimizer assigns a **"Value-Momentum Score"** to every stock based on two factors:
-    * **Value (50% weight):** Measured by Earnings Yield ($1/PE$). Cheaper stocks get higher scores.
-    * **Momentum (50% weight):** Measured by RSI. Stocks with strong uptrends get higher scores.
-    
-    $$
-    \\text{Score} = \\underbrace{\\left( \\frac{\\text{RSI}}{100} \\right)}_{\\text{Momentum}} + \\underbrace{\\left( \\frac{1}{\\text{PE Ratio}} \\times 50 \\right)}_{\\text{Value}}
-    $$
-
-    ### 2. Optimization Modes
-    * **📈 Maximize Gain:** The solver finds the exact mix of stocks that maximizes the **Total Portfolio Score**, subject to your concentration limit (e.g., max 25% per stock).
-    * **🛡️ Minimize Loss:** The solver finds the mix with the **lowest historical Volatility**. 
-        * *Constraint:* To ensure quality, the portfolio's average Score must still be at least equal to the market average. This prevents the algorithm from picking "safe" but "bad" stocks (expensive/weak).
-    """)
-
 # 3. EXECUTION
 if run_optimization:
     # --- CSS HACK: Force Center Alignment in Dataframes ---
     st.markdown("""
     <style>
-        /* Center Column Headers */
-        [data-testid="stDataFrame"] th {
-            text-align: center !important;
-        }
-        /* Center Cell Content */
-        [data-testid="stDataFrame"] td {
-            text-align: center !important;
-        }
+        [data-testid="stDataFrame"] th { text-align: center !important; }
+        [data-testid="stDataFrame"] td { text-align: center !important; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -290,3 +274,22 @@ if run_optimization:
                 st.error("No optimal solution found. Try relaxing the constraints (increase Max Weight).")
         else:
             st.error("Could not fetch data.")
+
+# --- LOGIC SUMMARY SECTION ---
+st.divider()
+with st.expander("ℹ️ How the Optimization Logic Works"):
+    st.markdown("""
+    ### 1. The Scoring Formula
+    The optimizer assigns a **"Value-Momentum Score"** to every asset:
+    * **Value (50% weight):** Measured by Earnings Yield ($1/PE$). 
+    * **Momentum (50% weight):** Measured by RSI. 
+    
+    $$
+    \\text{Score} = \\underbrace{\\left( \\frac{\\text{RSI}}{100} \\right)}_{\\text{Momentum}} + \\underbrace{\\left( \\frac{1}{\\text{PE Ratio}} \\times 50 \\right)}_{\\text{Value}}
+    $$
+
+    ### 2. Optimization Modes
+    * **📈 Maximize Gain:** The solver finds the exact mix of sectors that maximizes the **Total Portfolio Score**, subject to your concentration limit.
+    * **🛡️ Minimize Loss:** The solver finds the mix with the **lowest historical Volatility**. 
+        * *Constraint:* The portfolio's average Score must still be at least equal to the market average to ensure quality.
+    """)
