@@ -249,22 +249,45 @@ if run_optimization:
                 
                 with st.expander("📊 Strategy Breakdown: Allocation Methodology"):
                     st.markdown("""
-                    This model employs a multi-factor approach, optimizing for **Earnings Yield** (Value) and **Relative Strength** (Momentum) under the constraints of sum of weights is 100%.
+                    This model employs a multi-factor approach, optimizing for **Earnings Yield** (Value) and **Relative Strength** (Momentum) under strict variance constraints.
                     
-                    * **Weighting:** The optimal amount to allocate as computed from the (linear optimization) solver.
-                    * **Diversification:** Constraints are applied to mitigate idiosyncratic risk, ensuring no single sector exceeds the user-defined concentration limit.
-                    * **P/E Ratio (Value Factor):** Utilized here as a proxy for valuation. Lower multiples suggest higher earnings yield, enhancing the 'Value' component of the composite score.
-                    * **RSI (Momentum Factor):** Serves as a technical proxy for trend strength. Relative Strength Index values >50 contribute positively to the 'Momentum' component, targeting assets with established uptrends.
+                    * **Weighting:** The optimal capital allocation coefficient derived from the linear optimization solver.
+                    * **RSI (Momentum Factor):** The portfolio RSI is the **Weighted Arithmetic Mean** of individual constituents, targeting assets with established uptrends (>50).
                     
-                    **Objective:** The solver allocates capital to maximize the combined factor exposure (Value + Momentum) while adhering to the maximum sector concentration limits.
+                    **Note on P/E Calculation (Harmonic Mean):**
+                    For the Portfolio P/E, we utilize the **Weighted Harmonic Mean** rather than a simple arithmetic average. 
+                    * *Rationale:* P/E is a ratio of Price to Earnings. Averaging ratios directly can be mathematically misleading due to outliers. The Harmonic Mean correctly averages the underlying "Earnings Yields" (E/P) and inverts the result, providing a true reflection of the portfolio's aggregate valuation.
                     """)
 
+                # --- CALCULATION OF TOTALS ---
                 display_df = df_opt[["Ticker", "Weight", "PE", "RSI"]].copy()
-                display_df["Weight"] = display_df["Weight"].apply(lambda x: f"{x:.1%}")
-                display_df["PE"] = display_df["PE"].apply(lambda x: f"{x:.1f}")
-                display_df["RSI"] = display_df["RSI"].apply(lambda x: f"{x:.1f}")
+
+                # 1. Weighted RSI (Arithmetic Mean)
+                weighted_rsi = (display_df['Weight'] * display_df['RSI']).sum()
                 
-                st.dataframe(display_df, use_container_width=False)
+                # 2. Weighted PE (Harmonic Mean)
+                # Formula: 1 / Sum(Weight / PE)
+                # This equals: 1 / (Weighted Average Earnings Yield)
+                weighted_earnings_yield = (display_df['Weight'] / display_df['PE']).sum()
+                portfolio_pe = 1 / weighted_earnings_yield if weighted_earnings_yield > 0 else 0
+
+                # 3. Create Summary Row
+                summary_row = pd.DataFrame([{
+                    "Ticker": "PORTFOLIO TOTAL",
+                    "Weight": display_df['Weight'].sum(),
+                    "PE": portfolio_pe,
+                    "RSI": weighted_rsi
+                }])
+
+                # 4. Append and Format
+                final_table = pd.concat([display_df, summary_row], ignore_index=True)
+                
+                # Formatting
+                final_table["Weight"] = final_table["Weight"].apply(lambda x: f"{x:.1%}")
+                final_table["PE"] = final_table["PE"].apply(lambda x: f"{x:.1f}")
+                final_table["RSI"] = final_table["RSI"].apply(lambda x: f"{x:.1f}")
+                
+                st.dataframe(final_table, use_container_width=False)
                 
                 # --- TECHNICAL ANALYSIS ---
                 st.divider()
