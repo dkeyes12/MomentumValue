@@ -72,10 +72,17 @@ def process_bulk_data(tickers, sector_map, period="2y"):
             
             hist_data[t] = df
 
+            # Metrics
             current_price = df['Close'].iloc[-1]
+            start_price = df['Close'].iloc[0]
+            
+            # FIX: Calculate Return
+            pct_return = (current_price - start_price) / start_price if start_price > 0 else 0
+            
             rsi = df['RSI'].iloc[-1]
             volatility = df['Close'].pct_change().std() * np.sqrt(252)
             
+            # Fetch PE
             try:
                 stock_info = yf.Ticker(t).info
                 pe = stock_info.get('trailingPE')
@@ -86,11 +93,12 @@ def process_bulk_data(tickers, sector_map, period="2y"):
             if pe is not None and pe > 0:
                 snapshot_data.append({
                     "Ticker": t,
-                    "Sector": sector_map.get(t, "Unknown"), # <--- Add Sector here
+                    "Sector": sector_map.get(t, "Unknown"),
                     "Price": current_price,
                     "PE": pe,
                     "RSI": rsi,
-                    "Volatility": volatility
+                    "Volatility": volatility,
+                    "Return": pct_return  # <--- Added this back
                 })
         except Exception:
             continue
@@ -134,7 +142,7 @@ def optimize_portfolio(df, objective_type, max_weight_per_asset):
             if w.solution_value() > 0.001: 
                 results.append({
                     "Ticker": df['Ticker'].iloc[i],
-                    "Sector": df['Sector'].iloc[i], # <--- Preserve Sector
+                    "Sector": df['Sector'].iloc[i],
                     "Weight": w.solution_value(),
                     "RSI": df['RSI'].iloc[i],
                     "PE": df['PE'].iloc[i],
@@ -218,6 +226,8 @@ if st.session_state["market_data"] is not None:
     st.divider()
     st.subheader("2. Market Data Analysis")
     height_universe = (len(df_market) + 1) * 35
+    
+    # Updated to display Return correctly
     st.dataframe(
         df_market[["Ticker", "Sector", "PE", "RSI", "Return", "Volatility"]].style.format({
             "PE": "{:.2f}", "RSI": "{:.2f}", "Return": "{:.2%}", "Volatility": "{:.2%}"
