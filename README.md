@@ -1,73 +1,98 @@
-# MomentumValue
+# MomentumValue 📈
 
-A multi-page Streamlit application for comprehensive stock analysis and portfolio optimization, combining value investing metrics (P/E and PEG ratios) with momentum indicators (RSI) for both individual stock selection and portfolio construction.
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)](https://www.python.org/)
+[![Streamlit](https://img.shields.io/badge/Streamlit-1.0+-red.svg)](https://streamlit.io/)
 
-## Quick start ✅
+A sophisticated multi-page Streamlit application that combines **value investing** principles with **momentum analysis** for intelligent stock selection and portfolio optimization.
 
-1. Create and activate a Python virtual environment (Windows PowerShell):
+## ✨ Features
 
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-```
+- **Dual-Mode Portfolio Optimization**: Optimize S&P 500 sector ETFs using P/E ratios or individual stocks using PEG ratios
+- **Interactive Stock Analysis**: P/E vs RSI quadrant plots with technical charts and buy/sell signals
+- **Linear Programming**: Uses OR-Tools for mathematically optimal portfolio allocation
+- **Real-time Data**: Live stock data via Yahoo Finance API
+- **Responsive UI**: Clean, intuitive interface built with Streamlit
 
-2. Install dependencies:
+## 🚀 Quick Start
 
-```powershell
-pip install -r requirements.txt
-```
+### Prerequisites
+- Python 3.8+
+- pip
 
-3. Run the app:
+### Installation
 
-```powershell
-streamlit run streamlit_app.py
-# or
-python -m streamlit run streamlit_app.py
-```
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/dkeyes12/MomentumValue.git
+   cd MomentumValue
+   ```
 
-Open the URL Streamlit prints in your browser (usually http://localhost:8501).
+2. **Create virtual environment**
+   ```bash
+   python -m venv venv
+   source venv/bin/activate  # On Windows: venv\Scripts\activate
+   ```
 
----
+3. **Install dependencies**
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-## Project overview 🔧
+4. **Run the application**
+   ```bash
+   streamlit run streamlit_app.py
+   ```
 
-This is a multi-page Streamlit app with the following structure:
+5. **Open your browser** to `http://localhost:8501`
 
-- **Main Dashboard** (`streamlit_app.py`): Dual-mode portfolio optimizer supporting both S&P 500 sector ETFs (P/E-based) and individual stock portfolios (PEG-based) using linear programming.
-- **Stock Selection Assist** (`pages/Stock Selection Assist.py`): Individual stock momentum analysis with P/E vs RSI quadrant plots and technical charts.
+## 📊 Application Structure
 
-**Dependencies**: `streamlit`, `yfinance`, `pandas`, `numpy`, `ortools`, `plotly` (see `requirements.txt`).
-
-**Data flow**: Streamlit UI → `yfinance.Ticker.history()` & `.info` → Pandas DataFrame → indicator calculations (`SMA_50`, `SMA_200`, `RSI`) → Linear optimization (main app) or visualization (stock assist).
-
----
-
-## Pages Overview 📄
-
-### 1. Portfolio Optimizer (Main App)
-- **Dual Mode Operation**: Switch between "S&P 500 Sectors (P/E)" for sector ETF allocation and "Popular and widely followed stocks (P/E/G)" for individual stock portfolios
-- **ETF Mode**: Optimizes S&P 500 sector ETF portfolios using P/E ratios and RSI momentum
+### 🏠 Main Dashboard (`streamlit_app.py`)
+- **ETF Mode**: Optimize S&P 500 sector ETF portfolios using P/E ratios and RSI momentum
 - **Stock Mode**: Advanced optimization using PEG (Price/Earnings to Growth) ratios for growth-adjusted valuation
-- **Linear Programming**: Uses OR-Tools GLOP solver to maximize gains or minimize volatility
-- **Interactive Universe**: Editable table of tickers with sector mapping
-- **Portfolio Analytics**: Weighted P/E/PEG and RSI calculations, allocation tables, and technical deep-dives
+- **Linear Programming**: Maximizes returns while respecting constraints using OR-Tools GLOP solver
+- **Interactive Universe**: Editable ticker tables with sector mapping
+- **Portfolio Analytics**: Weighted metrics, allocation tables, and technical analysis
 
-### 2. Stock Selection Assist
-- Analyze individual stocks with interactive P/E vs RSI quadrant analysis
-- Technical charts with candlesticks, moving averages, and RSI indicators
-- Buy/Sell/Wait signals based on trend and momentum conditions
-- Configurable RSI source (Close, Open, High, Low) and time periods
+### 📈 Stock Selection Assist (`pages/Stock Selection Assist.py`)
+- **Individual Stock Analysis**: Deep-dive analysis for any publicly traded stock
+- **P/E vs RSI Quadrant**: Visual momentum vs value positioning
+- **Technical Charts**: Candlestick charts with moving averages and RSI indicators
+- **Trading Signals**: Buy/Sell/Wait recommendations based on trend and momentum
+- **Configurable Parameters**: Adjustable RSI source (Close/Open/High/Low) and time periods
 
----
+## 🛠️ Technical Details
 
-## Important notes & gotchas ⚠️
+### Dependencies
+- `streamlit` - Web app framework
+- `yfinance` - Yahoo Finance data API
+- `pandas` - Data manipulation
+- `numpy` - Numerical computations
+- `ortools` - Linear programming optimization
+- `plotly` - Interactive visualizations
 
-- yfinance can return empty DataFrames or omit fields in `.info` (e.g., `trailingPE`, `pegRatio`). The app handles fallbacks and filters out invalid data.
-- `RSI` is computed using the user-selected source in the stock assist page. The portfolio optimizer uses Close price for consistency.
-- Portfolio optimization uses OR-Tools linear solver; ensure sufficient data points for reliable results.
-- The main entry point is `streamlit_app.py` — Streamlit automatically discovers pages in the `pages/` folder.
-- PEG data is typically only available for individual stocks, which is why stock mode uses individual companies rather than ETFs.
-- Cache management is implemented to handle mode switching without data conflicts.
+### Data Flow
+```
+Streamlit UI → Yahoo Finance API → Pandas DataFrame
+    ↓
+Indicator Calculations (SMA, RSI)
+    ↓
+Linear Optimization / Visualization
+```
+
+### Key Functions
+- `calculate_rsi()` - Relative Strength Index computation
+- `optimize_portfolio()` - Linear programming portfolio optimization
+- `get_stock_data()` - Data fetching and indicator calculation
+- `determine_signal()` - Buy/sell/hold signal generation
+
+## ⚠️ Important Notes
+
+- **Data Reliability**: Yahoo Finance data may occasionally be incomplete; the app handles fallbacks gracefully
+- **PEG Availability**: PEG ratios are typically only available for individual stocks, not ETFs
+- **Cache Management**: Session state caching prevents unnecessary API calls
+- **Optimization Constraints**: Ensure sufficient historical data for reliable optimization results
 
 ---
 
@@ -88,27 +113,28 @@ df['typical'] = (df['High'] + df['Low'] + df['Close']) / 3
 df['VWAP'] = (df['typical'] * df['Volume']).cumsum() / df['Volume'].cumsum()
 ```
 
----
+## 🧪 Testing
 
-## Testing & CI suggestions (no tests currently) 🧪
-
-- There are no unit tests yet. Suggested first targets: `calculate_rsi()`, `optimize_portfolio()`, and `process_bulk_data()` functions.
-- Add `pytest` as a dev dependency and place tests under `tests/`.
-- Example test command after adding pytest:
-
-```powershell
-pip install pytest
-pytest -q
+Run the existing test suite:
+```bash
+pip install -r requirements-dev.txt
+pytest test_portfolio_optimizer.py
 ```
 
----
+## 🤝 Contributing
 
-## Contributing
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
 
-1. Fork the repo and create a feature branch
-2. Add tests for new features that touch computation logic
-3. Open a PR with a clear description and screenshots if UI changes
+## 📄 License
 
----
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-If you'd like, I can add example unit tests for `calculate_rsi()` and `optimize_portfolio()` and/or a GH Actions workflow to run tests on PRs — tell me which and I'll prepare them. 👩‍💻
+## 🙋 Support
+
+If you find this project helpful, please give it a ⭐️!
+
+For questions or issues, please open a GitHub issue.
