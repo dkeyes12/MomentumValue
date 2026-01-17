@@ -46,7 +46,7 @@ def clear_cache_callback():
         if k in st.session_state:
             del st.session_state[k]
 
-# --- HELPER FUNCTIONS (Pure Logic - Testable) ---
+# --- HELPER FUNCTIONS (TESTABLE) ---
 def calculate_rsi(series, window=14):
     delta = series.diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=window).mean()
@@ -55,7 +55,7 @@ def calculate_rsi(series, window=14):
     return 100 - (100 / (1 + rs))
 
 @st.cache_data
-def process_bulk_data(tickers, sector_map, mode, period="5y"):
+def process_bulk_data(tickers, sector_map, mode, period="2y"):
     """
     Fetches data. 
     mode="ETF" -> Fetches P/E
@@ -70,16 +70,11 @@ def process_bulk_data(tickers, sector_map, mode, period="5y"):
     snapshot_data = []
     hist_data = {}
 
-    # Progress bar logic needs to be handled carefully in tests, 
-    # but since this is inside @st.cache_data, we generally mock it or use it as is.
-    # For safety in script, we check if we are in main execution context implicitly via Streamlit availability
-    # but strictly speaking, this function mixes logic and UI (st.progress). 
-    # For this level of testing, we will mock 'st' in the test file.
-    
+    # Progress bar wrapper to avoid errors during testing
     try:
         my_bar = st.progress(0, text="Fetching valuation metrics...")
     except:
-        my_bar = None # Handle case where st isn't active (testing)
+        my_bar = None
 
     total_tickers = len(ticker_list)
 
@@ -88,6 +83,7 @@ def process_bulk_data(tickers, sector_map, mode, period="5y"):
             my_bar.progress((idx + 1) / total_tickers, text=f"Fetching data for {t}...")
         
         try:
+            # Handle yfinance multi-index structure
             if len(ticker_list) == 1:
                 df = bulk_data.copy()
             else:
@@ -96,12 +92,14 @@ def process_bulk_data(tickers, sector_map, mode, period="5y"):
             if df.empty: continue
 
             df = df.dropna(how='all')
+            # Calculate Indicators
             df['SMA_50'] = df['Close'].rolling(window=50).mean()
             df['SMA_200'] = df['Close'].rolling(window=200).mean()
             df['RSI'] = calculate_rsi(df['Close'])
             
             hist_data[t] = df
 
+            # Metrics
             current_price = df['Close'].iloc[-1]
             start_price = df['Close'].iloc[0]
             pct_return = (current_price - start_price) / start_price if start_price > 0 else 0
@@ -109,6 +107,7 @@ def process_bulk_data(tickers, sector_map, mode, period="5y"):
             rsi = df['RSI'].iloc[-1]
             volatility = df['Close'].pct_change().std() * np.sqrt(252)
             
+            # --- ROBUST VALUATION FETCHING ---
             val_metric = None
             try:
                 stock = yf.Ticker(t)
@@ -126,7 +125,7 @@ def process_bulk_data(tickers, sector_map, mode, period="5y"):
                 
                 time.sleep(0.1)
                 
-            except Exception:
+            except Exception as e:
                 val_metric = None
             
             if val_metric is not None and val_metric > 0:
@@ -148,7 +147,7 @@ def process_bulk_data(tickers, sector_map, mode, period="5y"):
                     
                 snapshot_data.append(row)
 
-        except Exception:
+        except Exception as e:
             continue
     
     if my_bar:
@@ -164,12 +163,14 @@ def optimize_portfolio(df, objective_type, max_weight_per_asset, mode):
     for i in range(len(df)):
         weights.append(solver.NumVar(0.0, max_weight_per_asset, f'w_{i}'))
 
+    # Constraint: Sum of weights = 1.0
     constraint_sum = solver.Constraint(1.0, 1.0)
     for w in weights:
         constraint_sum.SetCoefficient(w, 1)
 
     objective = solver.Objective()
     
+    # --- ADAPTIVE SCORING LOGIC ---
     if mode == "Popular and widely followed stocks (P/E/G)":
         scores = (df['RSI'] / 100) + (1 / df['PEG']) 
     else:
@@ -210,9 +211,9 @@ def optimize_portfolio(df, objective_type, max_weight_per_asset, mode):
     else:
         return pd.DataFrame()
 
-# --- MAIN APP LOGIC (UI) ---
-def run_app():
-    # Only run these when executed as a script, not when imported
+# --- MAIN DASHBOARD LOGIC (WRAPPED) ---
+def main():
+    # Only runs when called directly
     st.set_page_config(page_title="Portfolio Optimizer [Maximize MomentumValue]", layout="wide")
 
     # --- INITIALIZE STATE ---
@@ -237,7 +238,7 @@ def run_app():
         period_select = st.selectbox(
             "Historical Data Lookback:",
             options=["1y", "2y", "3y", "5y"],
-            index=3,
+            index=3, 
             help="Determines the window for RSI, Volatility, and Return calculations."
         )
 
@@ -276,7 +277,6 @@ def run_app():
     with col_action:
         st.write("### ") 
         if st.button("🚀 Run Optimization", type="primary", use_container_width=True):
-            
             tickers = edited_df["Ticker"].tolist()
             sector_mapping = dict(zip(edited_df['Ticker'], edited_df['Sector']))
 
@@ -356,7 +356,7 @@ def run_app():
             
             with st.expander("📊 Strategy Breakdown: Allocation Methodology"):
                 st.markdown("""
-                This model employs a multi-factor approach, optimizing for **Earnings Yield** (Value) and **Relative Strength** (Momentum).
+                This model employs a multi-factor approach, optimizing for **Earnings Yield** (Value) and **Relative Strength** (Momentum) under strict variance constraints.
                 
                 * **Weighting:** The optimal capital allocation coefficient derived from the linear optimization solver.
                 * **RSI (Momentum Factor):** The portfolio RSI is the **Weighted Arithmetic Mean**.
@@ -416,10 +416,12 @@ def run_app():
 
         ### 2. Linear vs. Quadratic Optimization 
         
-        * **Linear Programming (Factor Exposure):** This tool utilizes Linear Programming (GLOP solver) to maximize direct factor exposure. Instead of minimizing variance through correlation, we mitigate risk via **concentration constraints**.
-        * **Quadratic Programming (MPT):** Modern Portfolio Theory typically employs Quadratic Programming to minimize portfolio variance ($\sigma^2$) using the covariance matrix $\Sigma$.
+        
+
+        * **Linear Programming (Factor Exposure):** This tool utilizes Linear Programming (GLOP solver) to maximize direct factor exposure. Instead of minimizing variance through correlation, we mitigate risk via **concentration constraints** (hard limits on max allocation). This allows for a computationally efficient ($O(n)$) maximization of the 'Growth + Momentum' alpha score without the instability often introduced by covariance estimation errors in small samples.
+        * **Quadratic Programming (MPT):** Modern Portfolio Theory typically employs Quadratic Programming to minimize portfolio variance ($\sigma^2$). This requires calculating the full covariance matrix $\Sigma$ to account for pairwise asset correlations ($O(n^2)$ complexity). It optimizes for the lowest risk at a given return level.
         """)
 
 # --- ENTRY POINT ---
 if __name__ == "__main__":
-    run_app()
+    main()
