@@ -154,8 +154,11 @@ def process_bulk_data(tickers, sector_map, mode, period="2y"):
         my_bar.empty()
             
     return pd.DataFrame(snapshot_data), hist_data
-
 def optimize_portfolio(df, objective_type, max_weight_per_asset, mode):
+    # --- FIX: Handle Empty Data Immediately ---
+    if df is None or df.empty:
+        return pd.DataFrame()
+        
     solver = pywraplp.Solver.CreateSolver('GLOP')
     if not solver: return None
 
@@ -210,7 +213,8 @@ def optimize_portfolio(df, objective_type, max_weight_per_asset, mode):
         return pd.DataFrame(results)
     else:
         return pd.DataFrame()
-
+    
+    
 # --- MAIN DASHBOARD LOGIC (WRAPPED) ---
 def main():
     # Only runs when called directly
