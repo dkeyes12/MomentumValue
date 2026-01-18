@@ -309,7 +309,6 @@ def run_app():
             st.divider()
             st.subheader("3. Optimal Allocation")
             
-            # --- EXPANDER ADDED HERE ---
             with st.expander("📊 Strategy Breakdown: Allocation Methodology"):
                 st.markdown("""
                 This model employs a multi-factor approach, optimizing for **Earnings Yield** (Value) and **Relative Strength** (Momentum).
@@ -319,7 +318,6 @@ def run_app():
                 * **P/E (Value Factor):** We utilize the **Weighted Harmonic Mean** rather than a simple arithmetic average.
                     * *Rationale:* Averaging valuation ratios directly creates bias. The Harmonic Mean correctly averages the underlying earnings yields (E/P).
                 """)
-            # ---------------------------
 
             st.dataframe(df_opt, use_container_width=True)
 
