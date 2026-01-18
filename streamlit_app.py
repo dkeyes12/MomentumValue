@@ -266,7 +266,6 @@ def main():
                     st.error("Need 2+ tickers.")
                 else:
                     with st.spinner(f"Fetching {period_select} data..."):
-                        # Fixed variable name bug: using sector_map now
                         df_mkt, hist_data = process_bulk_data(tickers, sector_map, mode_select, period=period_select)
                         if df_mkt is not None and not df_mkt.empty:
                             df_res = optimize_portfolio(df_mkt, obj_choice, max_concentration, mode_select)
@@ -401,11 +400,19 @@ def main():
             
             # Summary Statistics
             st.subheader("Risk & Return Metrics")
-            summary_df = pop.summary() 
-            st.dataframe(summary_df.style.format("{:.2%}"), use_container_width=True)
+            try:
+                summary_df = pop.summary()
+                # --- FIX: REMOVE FORMATTING TO PREVENT ERRORS WITH MIXED TYPES ---
+                st.dataframe(summary_df, use_container_width=True)
+            except Exception as e:
+                st.error(f"Could not generate summary table: {e}")
             
             # Composition Pie Chart
             st.subheader("Portfolio Composition")
+            
+
+[Image of Pie Chart]
+
             fig_comp = strategy_portfolio.plot_composition()
             st.plotly_chart(fig_comp, use_container_width=True)
 
