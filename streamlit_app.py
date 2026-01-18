@@ -201,6 +201,7 @@ def optimize_portfolio(df, objective_type, max_weight_per_asset, mode):
                 row = {
                     "Ticker": df['Ticker'].iloc[i],
                     "Sector": df['Sector'].iloc[i],
+                    "Scores": scores.iloc[i],
                     "Weight": w.solution_value(),
                     "RSI": df['RSI'].iloc[i],
                     "Volatility": df['Volatility'].iloc[i]

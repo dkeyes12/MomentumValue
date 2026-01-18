@@ -5,3 +5,5 @@ numpy
 ortools
 plotly
 matplotlib
+scikit-learn
+skfolio
