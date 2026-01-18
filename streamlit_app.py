@@ -11,7 +11,6 @@ import time
 try:
     from skfolio import Portfolio, Population
     from skfolio.preprocessing import prices_to_returns
-    from skfolio.measures import SharpeRatio, RiskMeasure
     SKFOLIO_AVAILABLE = True
 except ImportError:
     SKFOLIO_AVAILABLE = False
@@ -267,7 +266,8 @@ def main():
                     st.error("Need 2+ tickers.")
                 else:
                     with st.spinner(f"Fetching {period_select} data..."):
-                        df_mkt, hist_data = process_bulk_data(tickers, sector_mapping, mode_select, period=period_select)
+                        # Fixed variable name bug: using sector_map now
+                        df_mkt, hist_data = process_bulk_data(tickers, sector_map, mode_select, period=period_select)
                         if df_mkt is not None and not df_mkt.empty:
                             df_res = optimize_portfolio(df_mkt, obj_choice, max_concentration, mode_select)
                             st.session_state["market_data"] = df_mkt
@@ -299,8 +299,119 @@ def main():
             fig_quad.add_trace(go.Scatter(x=rem[metric_col].clip(upper=MAX_X), y=rem['RSI'], mode='markers+text', text=rem['Ticker'], name='Universe', marker=dict(color='gray', size=10)))
             fig_quad.add_trace(go.Scatter(x=df_opt[metric_col].clip(upper=MAX_X), y=df_opt['RSI'], mode='markers+text', text=df_opt['Ticker'], name='Selected', marker=dict(color='blue', size=15)))
             
-            # Quadrants
-            fig_quad.add_shape(type="rect", x0=0, y0=50, x1=VAL_THRESHOLD, y1=100, fillcolor="green", opacity=0.1, layer="below", line_width=0)
-            fig_quad.add_shape(type="rect", x0=VAL_THRESHOLD, y0=50, x1=MAX_X, y1=100, fillcolor="yellow", opacity=0.1, layer="below", line_width=0)
-            fig_quad.add_shape(type="rect", x0=0, y0=0, x1=VAL_THRESHOLD, y1=50, fillcolor="yellow", opacity=0.1, layer="below", line_width=0)
-            fig_quad.add_shape(type="rect", x0=VAL_THRESHOLD, y0=0, x1
+            # Quadrants (Broken into multiple lines to avoid SyntaxError)
+            fig_quad.add_shape(
+                type="rect", x0=0, y0=50, x1=VAL_THRESHOLD, y1=100, 
+                fillcolor="green", opacity=0.1, layer="below", line_width=0
+            )
+            fig_quad.add_shape(
+                type="rect", x0=VAL_THRESHOLD, y0=50, x1=MAX_X, y1=100, 
+                fillcolor="yellow", opacity=0.1, layer="below", line_width=0
+            )
+            fig_quad.add_shape(
+                type="rect", x0=0, y0=0, x1=VAL_THRESHOLD, y1=50, 
+                fillcolor="yellow", opacity=0.1, layer="below", line_width=0
+            )
+            fig_quad.add_shape(
+                type="rect", x0=VAL_THRESHOLD, y0=0, x1=MAX_X, y1=50, 
+                fillcolor="red", opacity=0.1, layer="below", line_width=0
+            )
+            
+            fig_quad.update_layout(title="Asset Selection Matrix", xaxis_title=x_label, yaxis_title="RSI (Momentum)", height=500)
+            st.plotly_chart(fig_quad, use_container_width=True)
+
+            # Allocation
+            st.subheader("3. Optimal Allocation")
+            st.dataframe(df_opt, use_container_width=True)
+
+            # Technicals
+            st.subheader("4. Technical Analysis")
+            if st.session_state["historical_data"]:
+                sel_t = st.selectbox("View Chart:", list(st.session_state["historical_data"].keys()))
+                df_c = st.session_state["historical_data"][sel_t]
+                fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.7, 0.3])
+                fig.add_trace(go.Candlestick(x=df_c.index, open=df_c['Open'], high=df_c['High'], low=df_c['Low'], close=df_c['Close'], name='OHLC'), row=1, col=1)
+                fig.add_trace(go.Scatter(x=df_c.index, y=df_c['SMA_50'], line=dict(color='orange'), name='SMA 50'), row=1, col=1)
+                fig.add_trace(go.Scatter(x=df_c.index, y=df_c['SMA_200'], line=dict(color='blue'), name='SMA 200'), row=1, col=1)
+                fig.add_trace(go.Scatter(x=df_c.index, y=df_c['RSI'], line=dict(color='purple'), name='RSI'), row=2, col=1)
+                fig.add_hline(y=70, row=2, col=1, line_dash="dot", line_color="red")
+                fig.add_hline(y=30, row=2, col=1, line_dash="dot", line_color="green")
+                fig.update_layout(height=500, xaxis_rangeslider_visible=False)
+                st.plotly_chart(fig, use_container_width=True)
+
+    # === TAB 2: BACKTESTING ===
+    with tab_backtest:
+        st.header("📈 Historical Backtest (skfolio)")
+        
+        if not SKFOLIO_AVAILABLE:
+            st.warning("Please install skfolio to see backtesting results.")
+        elif st.session_state["opt_results"] is None:
+            st.info("Please run the optimization in the first tab to generate a portfolio to backtest.")
+        else:
+            df_opt = st.session_state["opt_results"]
+            hist_data = st.session_state["historical_data"]
+            
+            # 1. Prepare Data for skfolio
+            # Combine all closing prices into a single DataFrame
+            price_dict = {t: data['Close'] for t, data in hist_data.items()}
+            price_df = pd.DataFrame(price_dict).dropna()
+            
+            # Convert to Returns
+            X = prices_to_returns(price_df)
+            
+            # 2. Define Weights
+            # Map optimized weights to the columns in price_df (order matters!)
+            # Create a dictionary of {Ticker: Weight} from optimization results
+            weight_map = dict(zip(df_opt['Ticker'], df_opt['Weight']))
+            
+            # Generate weight list for the 'X' DataFrame columns
+            # If a ticker is in X but wasn't selected (0 weight), we give it 0.
+            strategy_weights = [weight_map.get(t, 0.0) for t in X.columns]
+            
+            # 3. Create Portfolios
+            # Strategy Portfolio
+            strategy_portfolio = Portfolio(
+                X=X, 
+                weights=strategy_weights, 
+                name="Optimized Strategy (Static)"
+            )
+            
+            # Benchmark (Equal Weighted)
+            n_assets = len(X.columns)
+            benchmark_portfolio = Portfolio(
+                X=X,
+                weights=[1.0/n_assets] * n_assets,
+                name="Equal Weighted Benchmark"
+            )
+            
+            # 4. Analyze Population
+            pop = Population([strategy_portfolio, benchmark_portfolio])
+            
+            # 5. Display Results
+            st.markdown("""
+            **Note:** This backtest assumes a **Buy & Hold** strategy using the weights optimized today applied to historical data. 
+            It compares your selected portfolio against an Equal-Weighted benchmark of the entire universe.
+            """)
+            
+            # Plot Cumulative Returns
+            st.subheader("Cumulative Returns")
+            # skfolio returns a plotly figure
+            fig_cum = pop.plot_cumulative_returns()
+            st.plotly_chart(fig_cum, use_container_width=True)
+            
+            # Summary Statistics
+            st.subheader("Risk & Return Metrics")
+            summary_df = pop.summary() 
+            st.dataframe(summary_df.style.format("{:.2%}"), use_container_width=True)
+            
+            # Composition Pie Chart 
+            st.subheader("Portfolio Composition")
+            
+
+[Image of Pie Chart]
+
+            fig_comp = strategy_portfolio.plot_composition()
+            st.plotly_chart(fig_comp, use_container_width=True)
+
+if __name__ == "__main__":
+    main()
