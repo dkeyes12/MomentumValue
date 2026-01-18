@@ -9,8 +9,9 @@ A sophisticated multi-page Streamlit application that combines **value investing
 ## ✨ Features
 
 - **Dual-Mode Portfolio Optimization**: Optimize S&P 500 sector ETFs using P/E ratios or individual stocks using PEG ratios
+- **Advanced Portfolio Optimization**: Uses both OR-Tools linear programming and Skfolio for sophisticated portfolio allocation
 - **Interactive Stock Analysis**: P/E vs RSI quadrant plots with technical charts and buy/sell signals
-- **Linear Programming**: Uses OR-Tools for mathematically optimal portfolio allocation
+- **Backtesting Capabilities**: Historical portfolio performance analysis with Skfolio
 - **Real-time Data**: Live stock data via Yahoo Finance API
 - **Responsive UI**: Clean, intuitive interface built with Streamlit
 
@@ -52,6 +53,7 @@ A sophisticated multi-page Streamlit application that combines **value investing
 - **ETF Mode**: Optimize S&P 500 sector ETF portfolios using P/E ratios and RSI momentum
 - **Stock Mode**: Advanced optimization using PEG (Price/Earnings to Growth) ratios for growth-adjusted valuation
 - **Linear Programming**: Maximizes returns while respecting constraints using OR-Tools GLOP solver
+- **Advanced Optimization**: Portfolio optimization and backtesting using Skfolio library
 - **Interactive Universe**: Editable ticker tables with sector mapping
 - **Portfolio Analytics**: Weighted metrics, allocation tables, and technical analysis
 
@@ -71,6 +73,9 @@ A sophisticated multi-page Streamlit application that combines **value investing
 - `numpy` - Numerical computations
 - `ortools` - Linear programming optimization
 - `plotly` - Interactive visualizations
+- `matplotlib` - Plotting and visualization
+- `scikit-learn` - Machine learning algorithms
+- `skfolio` - Portfolio optimization library
 
 ### Data Flow
 ```
@@ -78,14 +83,15 @@ Streamlit UI → Yahoo Finance API → Pandas DataFrame
     ↓
 Indicator Calculations (SMA, RSI)
     ↓
-Linear Optimization / Visualization
+Portfolio Optimization (OR-Tools + Skfolio) / Visualization
 ```
 
 ### Key Functions
 - `calculate_rsi()` - Relative Strength Index computation
-- `optimize_portfolio()` - Linear programming portfolio optimization
-- `get_stock_data()` - Data fetching and indicator calculation
+- `optimize_portfolio()` - Linear programming portfolio optimization (OR-Tools)
+- `process_bulk_data()` - Data fetching and indicator calculation
 - `determine_signal()` - Buy/sell/hold signal generation
+- Portfolio backtesting with Skfolio (when available)
 
 ## ⚠️ Important Notes
 
@@ -93,25 +99,6 @@ Linear Optimization / Visualization
 - **PEG Availability**: PEG ratios are typically only available for individual stocks, not ETFs
 - **Cache Management**: Session state caching prevents unnecessary API calls
 - **Optimization Constraints**: Ensure sufficient historical data for reliable optimization results
-
----
-
-## Development tips ✍️
-
-- Streamlit auto-reloads on save — make small iterative edits to `streamlit_app.py` or files in `pages/` and watch the UI refresh.
-- Use `st.warning`, `st.error`, and `st.spinner` when adding new network-dependent features so failures surface gracefully.
-- Session state is used extensively for caching optimization results and historical data.
-- The dual-mode architecture requires careful cache management when switching between ETF and stock modes.
-
-### Adding indicators
-
-Add calculations inside `process_bulk_data()` (main app) or `get_stock_data()` (stock assist) and assign descriptive column names (e.g., `VWAP`, `SMA_20`). Example (not production-accurate VWAP):
-
-```python
-# inside process_bulk_data() or get_stock_data():
-df['typical'] = (df['High'] + df['Low'] + df['Close']) / 3
-df['VWAP'] = (df['typical'] * df['Volume']).cumsum() / df['Volume'].cumsum()
-```
 
 ## 🧪 Testing
 
