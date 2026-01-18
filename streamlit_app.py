@@ -19,7 +19,10 @@ except ImportError:
 def main():
     # Only runs when called directly
     st.set_page_config(page_title="Portfolio Optimizer [MomentumValue + Backtest]", layout="wide")
-    run_app()
+    try:
+        run_app()
+    except Exception as e:
+        st.error(f"An error occurred: {e}")
 
 # --- DATASETS ---
 ETF_TICKERS = [
@@ -266,7 +269,6 @@ def run_app():
                     st.error("Need 2+ tickers.")
                 else:
                     with st.spinner(f"Fetching {period_select} data..."):
-                        # Ensure 'sector_map' is passed correctly
                         df_mkt, hist_data = process_bulk_data(tickers, sector_map, mode_select, period=period_select)
                         if df_mkt is not None and not df_mkt.empty:
                             df_res = optimize_portfolio(df_mkt, obj_choice, max_concentration, mode_select)
@@ -306,20 +308,9 @@ def run_app():
             fig_quad.update_layout(title="Asset Selection Matrix", xaxis_title=x_label, yaxis_title="RSI (Momentum)", height=500)
             st.plotly_chart(fig_quad, use_container_width=True)
 
-            # 3. Optimal Allocation (With Methodology Expander)
+            # 3. Optimal Allocation
             st.divider()
             st.subheader("3. Optimal Allocation")
-            
-            with st.expander("📊 Strategy Breakdown: Allocation Methodology"):
-                st.markdown("""
-                This model employs a multi-factor approach, optimizing for **Earnings Yield** (Value) and **Relative Strength** (Momentum).
-                
-                * **Weighting:** The optimal capital allocation coefficient derived from the linear optimization solver.
-                * **RSI (Momentum Factor):** The portfolio RSI is the **Weighted Arithmetic Mean** of individual constituents.
-                * **P/E (Value Factor):** We utilize the **Weighted Harmonic Mean** rather than a simple arithmetic average.
-                    * *Rationale:* Averaging valuation ratios directly creates bias. The Harmonic Mean correctly averages the underlying earnings yields (E/P).
-                """)
-
             st.dataframe(df_opt, use_container_width=True)
 
             # 4. Technical Analysis
@@ -337,16 +328,16 @@ def run_app():
                 fig.update_layout(height=500, xaxis_rangeslider_visible=False)
                 st.plotly_chart(fig, use_container_width=True)
 
-        st.divider()
-        st.subheader("5. Market Data Analysis")
-        st.dataframe(
-            df_market[["Ticker", "Sector", metric_col, "RSI", "Return", "Volatility"]].style.format({
-                metric_col: "{:.2f}", "RSI": "{:.2f}", "Return": "{:.2%}", "Volatility": "{:.2%}"
-            }),
-            use_container_width=True, height=(len(df_market)+1)*35
-        )
+            st.divider()
+            st.subheader("5. Market Data Analysis")
+            st.dataframe(
+                df_market[["Ticker", "Sector", metric_col, "RSI", "Return", "Volatility"]].style.format({
+                    metric_col: "{:.2f}", "RSI": "{:.2f}", "Return": "{:.2%}", "Volatility": "{:.2%}"
+                }),
+                use_container_width=True, height=(len(df_market)+1)*35
+            )
 
-        # --- LOGIC SUMMARY ---
+        # --- LOGIC SUMMARY (MOVED HERE to always be visible) ---
         st.divider()
         with st.expander("ℹ️ How the Optimization Logic Works"):
             st.markdown(r"""
@@ -396,7 +387,8 @@ def run_app():
             st.subheader("Risk & Return Metrics")
             try:
                 summary_df = pop.summary()
-                st.dataframe(summary_df, use_container_width=True)
+                # Use .astype(str) to avoid formatting crashes with mixed types
+                st.dataframe(summary_df.astype(str), use_container_width=True)
             except Exception as e:
                 st.error(f"Could not generate summary: {e}")
             
