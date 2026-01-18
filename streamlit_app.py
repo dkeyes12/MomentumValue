@@ -280,6 +280,7 @@ def run_app():
             df_opt = st.session_state["opt_results"]
             metric_col = "PEG" if mode_select == "Popular and widely followed stocks (P/E/G)" else "PE"
 
+            # 2. Portfolio Visualization
             st.subheader("2. Portfolio Visualization")
             RSI_THRESHOLD = 50
             data_median = df_market[metric_col].median()
@@ -304,9 +305,25 @@ def run_app():
             fig_quad.update_layout(title="Asset Selection Matrix", xaxis_title=x_label, yaxis_title="RSI (Momentum)", height=500)
             st.plotly_chart(fig_quad, use_container_width=True)
 
+            # 3. Optimal Allocation (With Methodology Expander)
+            st.divider()
             st.subheader("3. Optimal Allocation")
+            
+            # --- EXPANDER ADDED HERE ---
+            with st.expander("📊 Strategy Breakdown: Allocation Methodology"):
+                st.markdown("""
+                This model employs a multi-factor approach, optimizing for **Earnings Yield** (Value) and **Relative Strength** (Momentum).
+                
+                * **Weighting:** The optimal capital allocation coefficient derived from the linear optimization solver.
+                * **RSI (Momentum Factor):** The portfolio RSI is the **Weighted Arithmetic Mean** of individual constituents.
+                * **P/E (Value Factor):** We utilize the **Weighted Harmonic Mean** rather than a simple arithmetic average.
+                    * *Rationale:* Averaging valuation ratios directly creates bias. The Harmonic Mean correctly averages the underlying earnings yields (E/P).
+                """)
+            # ---------------------------
+
             st.dataframe(df_opt, use_container_width=True)
 
+            # 4. Technical Analysis
             st.subheader("4. Technical Analysis")
             if st.session_state["historical_data"]:
                 sel_t = st.selectbox("View Chart:", list(st.session_state["historical_data"].keys()))
@@ -314,21 +331,21 @@ def run_app():
                 fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.7, 0.3])
                 fig.add_trace(go.Candlestick(x=df_c.index, open=df_c['Open'], high=df_c['High'], low=df_c['Low'], close=df_c['Close'], name='OHLC'), row=1, col=1)
                 fig.add_trace(go.Scatter(x=df_c.index, y=df_c['SMA_50'], line=dict(color='orange'), name='SMA 50'), row=1, col=1)
-                fig.add_trace(go.Scatter(x=df_c.index, y=df_c['SMA_200'], line=dict(color='blue'), name='SMA 200'), row=1, col=1)
+                fig.add_trace(go.Scatter(x=df_c.index, y=df_c['SMA_200'], line=dict(color='blue', width=2), name='SMA 200'), row=1, col=1)
                 fig.add_trace(go.Scatter(x=df_c.index, y=df_c['RSI'], line=dict(color='purple'), name='RSI'), row=2, col=1)
                 fig.add_hline(y=70, row=2, col=1, line_dash="dot", line_color="red")
                 fig.add_hline(y=30, row=2, col=1, line_dash="dot", line_color="green")
                 fig.update_layout(height=500, xaxis_rangeslider_visible=False)
                 st.plotly_chart(fig, use_container_width=True)
 
-            st.divider()
-            st.subheader("5. Market Data Analysis")
-            st.dataframe(
-                df_market[["Ticker", "Sector", metric_col, "RSI", "Return", "Volatility"]].style.format({
-                    metric_col: "{:.2f}", "RSI": "{:.2f}", "Return": "{:.2%}", "Volatility": "{:.2%}"
-                }),
-                use_container_width=True, height=(len(df_market)+1)*35
-            )
+        st.divider()
+        st.subheader("5. Market Data Analysis")
+        st.dataframe(
+            df_market[["Ticker", "Sector", metric_col, "RSI", "Return", "Volatility"]].style.format({
+                metric_col: "{:.2f}", "RSI": "{:.2f}", "Return": "{:.2%}", "Volatility": "{:.2%}"
+            }),
+            use_container_width=True, height=(len(df_market)+1)*35
+        )
 
         # --- LOGIC SUMMARY ---
         st.divider()
