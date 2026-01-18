@@ -299,7 +299,7 @@ def main():
             fig_quad.add_trace(go.Scatter(x=rem[metric_col].clip(upper=MAX_X), y=rem['RSI'], mode='markers+text', text=rem['Ticker'], name='Universe', marker=dict(color='gray', size=10)))
             fig_quad.add_trace(go.Scatter(x=df_opt[metric_col].clip(upper=MAX_X), y=df_opt['RSI'], mode='markers+text', text=df_opt['Ticker'], name='Selected', marker=dict(color='blue', size=15)))
             
-            # Quadrants (Broken into multiple lines to avoid SyntaxError)
+            # Quadrants
             fig_quad.add_shape(
                 type="rect", x0=0, y0=50, x1=VAL_THRESHOLD, y1=100, 
                 fillcolor="green", opacity=0.1, layer="below", line_width=0
@@ -404,12 +404,8 @@ def main():
             summary_df = pop.summary() 
             st.dataframe(summary_df.style.format("{:.2%}"), use_container_width=True)
             
-            # Composition Pie Chart 
+            # Composition Pie Chart
             st.subheader("Portfolio Composition")
-            
-
-[Image of Pie Chart]
-
             fig_comp = strategy_portfolio.plot_composition()
             st.plotly_chart(fig_comp, use_container_width=True)
 
