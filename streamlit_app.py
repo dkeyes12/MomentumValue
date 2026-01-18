@@ -266,6 +266,7 @@ def run_app():
                     st.error("Need 2+ tickers.")
                 else:
                     with st.spinner(f"Fetching {period_select} data..."):
+                        # Ensure 'sector_map' is passed correctly
                         df_mkt, hist_data = process_bulk_data(tickers, sector_map, mode_select, period=period_select)
                         if df_mkt is not None and not df_mkt.empty:
                             df_res = optimize_portfolio(df_mkt, obj_choice, max_concentration, mode_select)
@@ -358,8 +359,6 @@ def run_app():
 
             ### 2. Linear vs. Quadratic Optimization 
             
-            
-
             * **Linear Programming (Factor Exposure):** This tool utilizes Linear Programming (GLOP solver) to maximize direct factor exposure. Instead of minimizing variance through correlation, we mitigate risk via **concentration constraints** (hard limits on max allocation). This allows for a computationally efficient ($O(n)$) maximization of the 'Growth + Momentum' alpha score without the instability often introduced by covariance estimation errors in small samples.
             * **Quadratic Programming (MPT):** Modern Portfolio Theory typically employs Quadratic Programming to minimize portfolio variance ($\sigma^2$). This requires calculating the full covariance matrix $\Sigma$ to account for pairwise asset correlations ($O(n^2)$ complexity). It optimizes for the lowest risk at a given return level.
             """)
@@ -388,8 +387,11 @@ def run_app():
             st.markdown("Comparing your optimized portfolio against an equal-weighted benchmark.")
             
             st.subheader("Cumulative Returns")
-            fig_cum = pop.plot_cumulative_returns()
-            st.plotly_chart(fig_cum, use_container_width=True)
+            try:
+                fig_cum = pop.plot_cumulative_returns()
+                st.plotly_chart(fig_cum, use_container_width=True)
+            except Exception as e:
+                st.error(f"Could not plot cumulative returns: {e}")
             
             st.subheader("Risk & Return Metrics")
             try:
@@ -399,8 +401,11 @@ def run_app():
                 st.error(f"Could not generate summary: {e}")
             
             st.subheader("Portfolio Composition")
-            fig_comp = strategy_portfolio.plot_composition()
-            st.plotly_chart(fig_comp, use_container_width=True)
+            try:
+                fig_comp = strategy_portfolio.plot_composition()
+                st.plotly_chart(fig_comp, use_container_width=True)
+            except Exception as e:
+                st.error(f"Could not plot composition: {e}")
 
 if __name__ == "__main__":
     main()
