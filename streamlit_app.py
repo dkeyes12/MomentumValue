@@ -16,7 +16,10 @@ except ImportError:
     SKFOLIO_AVAILABLE = False
 
 # --- CONFIGURATION ---
-st.set_page_config(page_title="Portfolio Optimizer [MomentumValue + Backtest]", layout="wide")
+def main():
+    # Only runs when called directly
+    st.set_page_config(page_title="Portfolio Optimizer [MomentumValue + Backtest]", layout="wide")
+    run_app()
 
 # --- DATASETS ---
 ETF_TICKERS = [
@@ -209,8 +212,7 @@ def optimize_portfolio(df, objective_type, max_weight_per_asset, mode):
     else:
         return pd.DataFrame()
 
-# --- MAIN APP ---
-def main():
+def run_app():
     if "market_data" not in st.session_state: st.session_state["market_data"] = None
     if "opt_results" not in st.session_state: st.session_state["opt_results"] = None
     if "historical_data" not in st.session_state: st.session_state["historical_data"] = {}
@@ -220,7 +222,6 @@ def main():
     if not SKFOLIO_AVAILABLE:
         st.error("⚠️ `skfolio` library not found. Please install it using `pip install skfolio` to enable backtesting features.")
 
-    # 1. SIDEBAR
     with st.sidebar:
         st.header("1. Settings")
         mode_select = st.radio(
@@ -238,7 +239,6 @@ def main():
             clear_cache_callback()
             st.rerun()
 
-    # --- TABS FOR UI ---
     tab_opt, tab_backtest = st.tabs(["⚙️ Optimization & Analysis", "📈 Backtesting (skfolio)"])
 
     # === TAB 1: OPTIMIZATION ===
@@ -275,13 +275,11 @@ def main():
                         else:
                             st.error("Fetch failed.")
 
-        # Display Results if Available
         if st.session_state["market_data"] is not None and st.session_state["opt_results"] is not None:
             df_market = st.session_state["market_data"]
             df_opt = st.session_state["opt_results"]
             metric_col = "PEG" if mode_select == "Popular and widely followed stocks (P/E/G)" else "PE"
 
-            # Plots
             st.subheader("2. Portfolio Visualization")
             RSI_THRESHOLD = 50
             data_median = df_market[metric_col].median()
@@ -298,32 +296,17 @@ def main():
             fig_quad.add_trace(go.Scatter(x=rem[metric_col].clip(upper=MAX_X), y=rem['RSI'], mode='markers+text', text=rem['Ticker'], name='Universe', marker=dict(color='gray', size=10)))
             fig_quad.add_trace(go.Scatter(x=df_opt[metric_col].clip(upper=MAX_X), y=df_opt['RSI'], mode='markers+text', text=df_opt['Ticker'], name='Selected', marker=dict(color='blue', size=15)))
             
-            # Quadrants
-            fig_quad.add_shape(
-                type="rect", x0=0, y0=50, x1=VAL_THRESHOLD, y1=100, 
-                fillcolor="green", opacity=0.1, layer="below", line_width=0
-            )
-            fig_quad.add_shape(
-                type="rect", x0=VAL_THRESHOLD, y0=50, x1=MAX_X, y1=100, 
-                fillcolor="yellow", opacity=0.1, layer="below", line_width=0
-            )
-            fig_quad.add_shape(
-                type="rect", x0=0, y0=0, x1=VAL_THRESHOLD, y1=50, 
-                fillcolor="yellow", opacity=0.1, layer="below", line_width=0
-            )
-            fig_quad.add_shape(
-                type="rect", x0=VAL_THRESHOLD, y0=0, x1=MAX_X, y1=50, 
-                fillcolor="red", opacity=0.1, layer="below", line_width=0
-            )
+            fig_quad.add_shape(type="rect", x0=0, y0=50, x1=VAL_THRESHOLD, y1=100, fillcolor="green", opacity=0.1, layer="below", line_width=0)
+            fig_quad.add_shape(type="rect", x0=VAL_THRESHOLD, y0=50, x1=MAX_X, y1=100, fillcolor="yellow", opacity=0.1, layer="below", line_width=0)
+            fig_quad.add_shape(type="rect", x0=0, y0=0, x1=VAL_THRESHOLD, y1=50, fillcolor="yellow", opacity=0.1, layer="below", line_width=0)
+            fig_quad.add_shape(type="rect", x0=VAL_THRESHOLD, y0=0, x1=MAX_X, y1=50, fillcolor="red", opacity=0.1, layer="below", line_width=0)
             
             fig_quad.update_layout(title="Asset Selection Matrix", xaxis_title=x_label, yaxis_title="RSI (Momentum)", height=500)
             st.plotly_chart(fig_quad, use_container_width=True)
 
-            # Allocation
             st.subheader("3. Optimal Allocation")
             st.dataframe(df_opt, use_container_width=True)
 
-            # Technicals
             st.subheader("4. Technical Analysis")
             if st.session_state["historical_data"]:
                 sel_t = st.selectbox("View Chart:", list(st.session_state["historical_data"].keys()))
@@ -338,10 +321,37 @@ def main():
                 fig.update_layout(height=500, xaxis_rangeslider_visible=False)
                 st.plotly_chart(fig, use_container_width=True)
 
+            st.divider()
+            st.subheader("5. Market Data Analysis")
+            st.dataframe(
+                df_market[["Ticker", "Sector", metric_col, "RSI", "Return", "Volatility"]].style.format({
+                    metric_col: "{:.2f}", "RSI": "{:.2f}", "Return": "{:.2%}", "Volatility": "{:.2%}"
+                }),
+                use_container_width=True, height=(len(df_market)+1)*35
+            )
+
+        # --- LOGIC SUMMARY ---
+        st.divider()
+        with st.expander("ℹ️ How the Optimization Logic Works"):
+            st.markdown(r"""
+            ### 1. The Scoring Formula
+            The optimizer assigns a **"Growth-Momentum Score"** to every asset:
+            
+            $$
+            \text{Score} = \underbrace{\left( \frac{\text{RSI}}{100} \right)}_{\text{Momentum}} + \underbrace{\left( \frac{1}{\text{PEG Ratio}} \right)}_{\text{Value}}
+            $$
+
+            ### 2. Linear vs. Quadratic Optimization 
+            
+            
+
+            * **Linear Programming (Factor Exposure):** This tool utilizes Linear Programming (GLOP solver) to maximize direct factor exposure. Instead of minimizing variance through correlation, we mitigate risk via **concentration constraints** (hard limits on max allocation). This allows for a computationally efficient ($O(n)$) maximization of the 'Growth + Momentum' alpha score without the instability often introduced by covariance estimation errors in small samples.
+            * **Quadratic Programming (MPT):** Modern Portfolio Theory typically employs Quadratic Programming to minimize portfolio variance ($\sigma^2$). This requires calculating the full covariance matrix $\Sigma$ to account for pairwise asset correlations ($O(n^2)$ complexity). It optimizes for the lowest risk at a given return level.
+            """)
+
     # === TAB 2: BACKTESTING ===
     with tab_backtest:
         st.header("📈 Historical Backtest (skfolio)")
-        
         if not SKFOLIO_AVAILABLE:
             st.warning("Please install skfolio to see backtesting results.")
         elif st.session_state["opt_results"] is None:
@@ -349,65 +359,30 @@ def main():
         else:
             df_opt = st.session_state["opt_results"]
             hist_data = st.session_state["historical_data"]
-            
-            # 1. Prepare Data for skfolio
-            # Combine all closing prices into a single DataFrame
             price_dict = {t: data['Close'] for t, data in hist_data.items()}
             price_df = pd.DataFrame(price_dict).dropna()
-            
-            # Convert to Returns
             X = prices_to_returns(price_df)
-            
-            # 2. Define Weights
-            # Map optimized weights to the columns in price_df (order matters!)
-            # Create a dictionary of {Ticker: Weight} from optimization results
             weight_map = dict(zip(df_opt['Ticker'], df_opt['Weight']))
-            
-            # Generate weight list for the 'X' DataFrame columns
-            # If a ticker is in X but wasn't selected (0 weight), we give it 0.
             strategy_weights = [weight_map.get(t, 0.0) for t in X.columns]
             
-            # 3. Create Portfolios
-            # Strategy Portfolio
-            strategy_portfolio = Portfolio(
-                X=X, 
-                weights=strategy_weights, 
-                name="Optimized Strategy (Static)"
-            )
-            
-            # Benchmark (Equal Weighted)
+            strategy_portfolio = Portfolio(X=X, weights=strategy_weights, name="Optimized Strategy")
             n_assets = len(X.columns)
-            benchmark_portfolio = Portfolio(
-                X=X,
-                weights=[1.0/n_assets] * n_assets,
-                name="Equal Weighted Benchmark"
-            )
+            benchmark_portfolio = Portfolio(X=X, weights=[1.0/n_assets]*n_assets, name="Equal Weighted Benchmark")
             
-            # 4. Analyze Population
             pop = Population([strategy_portfolio, benchmark_portfolio])
+            st.markdown("Comparing your optimized portfolio against an equal-weighted benchmark.")
             
-            # 5. Display Results
-            st.markdown("""
-            **Note:** This backtest assumes a **Buy & Hold** strategy using the weights optimized today applied to historical data. 
-            It compares your selected portfolio against an Equal-Weighted benchmark of the entire universe.
-            """)
-            
-            # Plot Cumulative Returns
             st.subheader("Cumulative Returns")
-            # skfolio returns a plotly figure
             fig_cum = pop.plot_cumulative_returns()
             st.plotly_chart(fig_cum, use_container_width=True)
             
-            # Summary Statistics
             st.subheader("Risk & Return Metrics")
             try:
                 summary_df = pop.summary()
-                # --- FIX: REMOVE FORMATTING TO PREVENT ERRORS WITH MIXED TYPES ---
                 st.dataframe(summary_df, use_container_width=True)
             except Exception as e:
-                st.error(f"Could not generate summary table: {e}")
+                st.error(f"Could not generate summary: {e}")
             
-            # Composition Pie Chart
             st.subheader("Portfolio Composition")
             fig_comp = strategy_portfolio.plot_composition()
             st.plotly_chart(fig_comp, use_container_width=True)
