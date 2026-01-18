@@ -409,10 +409,6 @@ def main():
             
             # Composition Pie Chart
             st.subheader("Portfolio Composition")
-            
-
-[Image of Pie Chart]
-
             fig_comp = strategy_portfolio.plot_composition()
             st.plotly_chart(fig_comp, use_container_width=True)
 
