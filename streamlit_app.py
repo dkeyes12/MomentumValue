@@ -269,6 +269,7 @@ def run_app():
                     st.error("Need 2+ tickers.")
                 else:
                     with st.spinner(f"Fetching {period_select} data..."):
+                        # FIX: Using sector_map correctly here
                         df_mkt, hist_data = process_bulk_data(tickers, sector_map, mode_select, period=period_select)
                         if df_mkt is not None and not df_mkt.empty:
                             df_res = optimize_portfolio(df_mkt, obj_choice, max_concentration, mode_select)
@@ -278,58 +279,78 @@ def run_app():
                         else:
                             st.error("Fetch failed.")
 
-        if st.session_state["market_data"] is not None and st.session_state["opt_results"] is not None:
+        # --- KEY FIX: Check market_data independently from opt_results ---
+        if st.session_state["market_data"] is not None:
             df_market = st.session_state["market_data"]
-            df_opt = st.session_state["opt_results"]
             metric_col = "PEG" if mode_select == "Popular and widely followed stocks (P/E/G)" else "PE"
 
-            # 2. Portfolio Visualization
-            st.subheader("2. Portfolio Visualization")
-            RSI_THRESHOLD = 50
-            data_median = df_market[metric_col].median()
-            
-            if data_median > 5.0:
-                VAL_THRESHOLD = 25; MAX_X = max(60, df_market[metric_col].max() * 1.1)
-                x_label = "P/E Ratio"
-            else:
-                VAL_THRESHOLD = 1.5; MAX_X = 4.0
-                x_label = "PEG Ratio"
+            # --- Only show Optimization visualizations if result exists ---
+            if st.session_state["opt_results"] is not None and not st.session_state["opt_results"].empty:
+                df_opt = st.session_state["opt_results"]
 
-            fig_quad = go.Figure()
-            rem = df_market[~df_market['Ticker'].isin(df_opt['Ticker'])]
-            fig_quad.add_trace(go.Scatter(x=rem[metric_col].clip(upper=MAX_X), y=rem['RSI'], mode='markers+text', text=rem['Ticker'], name='Universe', marker=dict(color='gray', size=10)))
-            fig_quad.add_trace(go.Scatter(x=df_opt[metric_col].clip(upper=MAX_X), y=df_opt['RSI'], mode='markers+text', text=df_opt['Ticker'], name='Selected', marker=dict(color='blue', size=15)))
-            
-            fig_quad.add_shape(type="rect", x0=0, y0=50, x1=VAL_THRESHOLD, y1=100, fillcolor="green", opacity=0.1, layer="below", line_width=0)
-            fig_quad.add_shape(type="rect", x0=VAL_THRESHOLD, y0=50, x1=MAX_X, y1=100, fillcolor="yellow", opacity=0.1, layer="below", line_width=0)
-            fig_quad.add_shape(type="rect", x0=0, y0=0, x1=VAL_THRESHOLD, y1=50, fillcolor="yellow", opacity=0.1, layer="below", line_width=0)
-            fig_quad.add_shape(type="rect", x0=VAL_THRESHOLD, y0=0, x1=MAX_X, y1=50, fillcolor="red", opacity=0.1, layer="below", line_width=0)
-            
-            fig_quad.update_layout(title="Asset Selection Matrix", xaxis_title=x_label, yaxis_title="RSI (Momentum)", height=500)
-            st.plotly_chart(fig_quad, use_container_width=True)
+                # 2. Portfolio Visualization
+                st.subheader("2. Portfolio Visualization")
+                RSI_THRESHOLD = 50
+                data_median = df_market[metric_col].median()
+                
+                if data_median > 5.0:
+                    VAL_THRESHOLD = 25; MAX_X = max(60, df_market[metric_col].max() * 1.1)
+                    x_label = "P/E Ratio"
+                else:
+                    VAL_THRESHOLD = 1.5; MAX_X = 4.0
+                    x_label = "PEG Ratio"
 
-            # 3. Optimal Allocation
-            st.divider()
-            st.subheader("3. Optimal Allocation")
-            st.dataframe(df_opt, use_container_width=True)
+                fig_quad = go.Figure()
+                rem = df_market[~df_market['Ticker'].isin(df_opt['Ticker'])]
+                fig_quad.add_trace(go.Scatter(x=rem[metric_col].clip(upper=MAX_X), y=rem['RSI'], mode='markers+text', text=rem['Ticker'], name='Universe', marker=dict(color='gray', size=10)))
+                fig_quad.add_trace(go.Scatter(x=df_opt[metric_col].clip(upper=MAX_X), y=df_opt['RSI'], mode='markers+text', text=df_opt['Ticker'], name='Selected', marker=dict(color='blue', size=15)))
+                
+                fig_quad.add_shape(type="rect", x0=0, y0=50, x1=VAL_THRESHOLD, y1=100, fillcolor="green", opacity=0.1, layer="below", line_width=0)
+                fig_quad.add_shape(type="rect", x0=VAL_THRESHOLD, y0=50, x1=MAX_X, y1=100, fillcolor="yellow", opacity=0.1, layer="below", line_width=0)
+                fig_quad.add_shape(type="rect", x0=0, y0=0, x1=VAL_THRESHOLD, y1=50, fillcolor="yellow", opacity=0.1, layer="below", line_width=0)
+                fig_quad.add_shape(type="rect", x0=VAL_THRESHOLD, y0=0, x1=MAX_X, y1=50, fillcolor="red", opacity=0.1, layer="below", line_width=0)
+                
+                fig_quad.update_layout(title="Asset Selection Matrix", xaxis_title=x_label, yaxis_title="RSI (Momentum)", height=500)
+                st.plotly_chart(fig_quad, use_container_width=True)
 
-            # 4. Technical Analysis
-            st.subheader("4. Technical Analysis")
-            if st.session_state["historical_data"]:
-                sel_t = st.selectbox("View Chart:", list(st.session_state["historical_data"].keys()))
-                df_c = st.session_state["historical_data"][sel_t]
-                fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.7, 0.3])
-                fig.add_trace(go.Candlestick(x=df_c.index, open=df_c['Open'], high=df_c['High'], low=df_c['Low'], close=df_c['Close'], name='OHLC'), row=1, col=1)
-                fig.add_trace(go.Scatter(x=df_c.index, y=df_c['SMA_50'], line=dict(color='orange'), name='SMA 50'), row=1, col=1)
-                fig.add_trace(go.Scatter(x=df_c.index, y=df_c['SMA_200'], line=dict(color='blue', width=2), name='SMA 200'), row=1, col=1)
-                fig.add_trace(go.Scatter(x=df_c.index, y=df_c['RSI'], line=dict(color='purple'), name='RSI'), row=2, col=1)
-                fig.add_hline(y=70, row=2, col=1, line_dash="dot", line_color="red")
-                fig.add_hline(y=30, row=2, col=1, line_dash="dot", line_color="green")
-                fig.update_layout(height=500, xaxis_rangeslider_visible=False)
-                st.plotly_chart(fig, use_container_width=True)
+                # 3. Optimal Allocation (With Methodology Expander)
+                st.divider()
+                st.subheader("3. Optimal Allocation")
+                
+                with st.expander("📊 Strategy Breakdown: Allocation Methodology"):
+                    st.markdown("""
+                    This model employs a multi-factor approach, optimizing for **Earnings Yield** (Value) and **Relative Strength** (Momentum).
+                    
+                    * **Weighting:** The optimal capital allocation coefficient derived from the linear optimization solver.
+                    * **RSI (Momentum Factor):** The portfolio RSI is the **Weighted Arithmetic Mean** of individual constituents.
+                    * **P/E (Value Factor):** We utilize the **Weighted Harmonic Mean** rather than a simple arithmetic average.
+                    
+                    
 
+                    **Why Harmonic Mean?** Averaging valuation ratios (like P/E) directly using an arithmetic mean creates a mathematical bias that overstates the "expensiveness" of the portfolio. The Harmonic Mean correctly averages the underlying "Earnings Yields" (E/P), providing a true reflection of the portfolio's aggregate valuation.
+                    """)
+
+                st.dataframe(df_opt, use_container_width=True)
+
+                # 4. Technical Analysis
+                st.subheader("4. Technical Analysis")
+                if st.session_state["historical_data"]:
+                    sel_t = st.selectbox("View Chart:", list(st.session_state["historical_data"].keys()))
+                    df_c = st.session_state["historical_data"][sel_t]
+                    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.7, 0.3])
+                    fig.add_trace(go.Candlestick(x=df_c.index, open=df_c['Open'], high=df_c['High'], low=df_c['Low'], close=df_c['Close'], name='OHLC'), row=1, col=1)
+                    fig.add_trace(go.Scatter(x=df_c.index, y=df_c['SMA_50'], line=dict(color='orange'), name='SMA 50'), row=1, col=1)
+                    fig.add_trace(go.Scatter(x=df_c.index, y=df_c['SMA_200'], line=dict(color='blue', width=2), name='SMA 200'), row=1, col=1)
+                    fig.add_trace(go.Scatter(x=df_c.index, y=df_c['RSI'], line=dict(color='purple'), name='RSI'), row=2, col=1)
+                    fig.add_hline(y=70, row=2, col=1, line_dash="dot", line_color="red")
+                    fig.add_hline(y=30, row=2, col=1, line_dash="dot", line_color="green")
+                    fig.update_layout(height=500, xaxis_rangeslider_visible=False)
+                    st.plotly_chart(fig, use_container_width=True)
+
+            # --- Section 5: Market Data (Always Visible if Market Data Exists) ---
             st.divider()
             st.subheader("5. Market Data Analysis")
+            # df_market is definitely defined here because of the outer check
             st.dataframe(
                 df_market[["Ticker", "Sector", metric_col, "RSI", "Return", "Volatility"]].style.format({
                     metric_col: "{:.2f}", "RSI": "{:.2f}", "Return": "{:.2%}", "Volatility": "{:.2%}"
@@ -337,7 +358,7 @@ def run_app():
                 use_container_width=True, height=(len(df_market)+1)*35
             )
 
-        # --- LOGIC SUMMARY (MOVED HERE to always be visible) ---
+        # --- LOGIC SUMMARY ---
         st.divider()
         with st.expander("ℹ️ How the Optimization Logic Works"):
             st.markdown(r"""
@@ -350,6 +371,8 @@ def run_app():
 
             ### 2. Linear vs. Quadratic Optimization 
             
+            
+
             * **Linear Programming (Factor Exposure):** This tool utilizes Linear Programming (GLOP solver) to maximize direct factor exposure. Instead of minimizing variance through correlation, we mitigate risk via **concentration constraints** (hard limits on max allocation). This allows for a computationally efficient ($O(n)$) maximization of the 'Growth + Momentum' alpha score without the instability often introduced by covariance estimation errors in small samples.
             * **Quadratic Programming (MPT):** Modern Portfolio Theory typically employs Quadratic Programming to minimize portfolio variance ($\sigma^2$). This requires calculating the full covariance matrix $\Sigma$ to account for pairwise asset correlations ($O(n^2)$ complexity). It optimizes for the lowest risk at a given return level.
             """)
