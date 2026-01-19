@@ -245,34 +245,48 @@ def run_stock_optimizer():
     # Inputs
     col_conf, col_univ = st.columns([1, 2])
     with col_conf:
-        # FIX: Swapped order so "Standard (P/E)" is the default (index 0)
         mode_sel = st.radio("Metrics:", ["Standard (P/E)", "Popular (P/E/G)"])
         obj = st.radio("Objective:", ["Maximize Gain", "Minimize Volatility"])
         max_w = st.slider("Max Weight (Individual)", 0.05, 1.0, 0.25, 0.05)
         
-        # --- SECTOR CONSTRAINT DISPLAY ---
+        # --- SECTOR CONSTRAINT TOGGLE ---
         use_sector_limits = False
         if "sector_targets" in st.session_state:
             st.divider()
-            st.markdown("🔗 **Macro Link Active**")
             use_sector_limits = st.checkbox("Apply Sector Limits from Mode 1?", value=True)
-            
             if use_sector_limits:
-                st.caption("Sector Constraints applied to Solver:")
-                # Create a small dataframe for display
-                targets = st.session_state["sector_targets"]
-                df_targets = pd.DataFrame(list(targets.items()), columns=["Sector", "Max Weight"])
-                # Format as percentage
-                st.dataframe(
-                    df_targets.style.format({"Max Weight": "{:.1%}"}),
-                    use_container_width=True,
-                    height=250 # Constrain height so it doesn't take up whole sidebar
-                )
+                st.caption(f"Constraints active (e.g. Tech ≤ {st.session_state['sector_targets'].get('Information Technology',0):.1%})")
         
     with col_univ:
         if "user_tickers" not in st.session_state: 
             st.session_state["user_tickers"] = pd.DataFrame(STOCK_TICKERS)
-        edited = st.data_editor(st.session_state["user_tickers"], num_rows="dynamic", use_container_width=True)
+        
+        # --- MERGE SECTOR LIMITS INTO TABLE (VISUAL ONLY) ---
+        display_df = st.session_state["user_tickers"].copy()
+        
+        if use_sector_limits and "sector_targets" in st.session_state:
+            # Map the sector limit to each ticker row
+            targets = st.session_state["sector_targets"]
+            display_df["Macro Cap"] = display_df["Sector"].map(targets)
+        
+        # Configure Columns: Make "Macro Cap" percentage formatted and Read-Only
+        column_cfg = {
+            "Ticker": st.column_config.TextColumn("Ticker", width="small"),
+            "Sector": st.column_config.TextColumn("Sector", width="medium"),
+            "Macro Cap": st.column_config.NumberColumn(
+                "Macro Cap", 
+                format="%.1f%%", 
+                disabled=True, # Read-only
+                help="Maximum allocation allowed for this entire sector (from Mode 1)."
+            )
+        }
+        
+        edited = st.data_editor(
+            display_df, 
+            column_config=column_cfg,
+            num_rows="dynamic", 
+            use_container_width=True
+        )
         
         if st.button("🚀 Optimize Portfolio", type="primary"):
             with st.spinner("Fetching data..."):
