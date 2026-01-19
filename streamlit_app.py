@@ -297,6 +297,7 @@ def run_stock_optimizer():
         mode_sel = st.radio("Metrics:", ["Standard (P/E)", "Popular (P/E/G)"])
         obj = st.radio("Objective:", ["Maximize Gain", "Minimize Volatility"])
         
+        # --- REORDERED: Macro Link above Max Weight ---
         use_sector_limits = False
         if "sector_targets" in st.session_state:
             st.divider()
@@ -360,14 +361,13 @@ def run_stock_optimizer():
 
         st.divider()
         st.subheader("1. Asset Selection Matrix")
-        # Now passing dataframe containing ALL assets (0 weight included)
         fig_quad = plot_quadrant_chart(df_res, metric_col, "RSI", weight_col="Weight")
         st.plotly_chart(fig_quad, use_container_width=True)
 
         st.subheader("2. Optimal Allocation")
         col_tbl, col_tv = st.columns([2, 1])
         with col_tbl:
-            # Filter for table to only show selected
+            # --- FIX: Sort Descending ---
             disp = df_res[df_res["Weight"] > 0.001].sort_values("Weight", ascending=False).copy()
             
             tot_w = disp["Weight"].sum()
@@ -381,7 +381,7 @@ def run_stock_optimizer():
             
             st.dataframe(
                 final.style.format({
-                    "Weight": "{:.2%}", # 2 Decimals
+                    "Weight": "{:.2%}", 
                     "RSI": "{:.1f}", 
                     "Volatility": "{:.2%}", 
                     metric_col: "{:.2f}"
