@@ -17,6 +17,7 @@ except ImportError:
 
 # --- CONFIGURATION ---
 def main():
+    # Only runs when called directly
     st.set_page_config(page_title="Portfolio Optimizer [MomentumValue + Backtest]", layout="wide")
     try:
         run_app()
@@ -354,18 +355,44 @@ def run_app():
                 col_table, col_export = st.columns([2, 1])
                 
                 with col_table:
-                    st.dataframe(df_opt, use_container_width=True)
+                    # --- CALCULATE & APPEND TOTAL ROW ---
+                    disp_df = df_opt.copy()
+                    
+                    # Totals
+                    total_weight = disp_df['Weight'].sum()
+                    w_rsi = (disp_df['Weight'] * disp_df['RSI']).sum() / total_weight if total_weight > 0 else 0
+                    
+                    # Harmonic Mean for Valuation
+                    w_val_inv = (disp_df['Weight'] / disp_df[metric_col]).sum()
+                    w_val = total_weight / w_val_inv if w_val_inv > 0 else 0
+                    
+                    summary = pd.DataFrame([{
+                        "Ticker": "TOTAL", 
+                        "Sector": "-", 
+                        "Weight": total_weight, 
+                        metric_col: w_val, 
+                        "RSI": w_rsi,
+                        "Volatility": np.nan
+                    }])
+                    
+                    final_df = pd.concat([disp_df, summary], ignore_index=True)
+                    
+                    # Formatting
+                    final_df["Weight"] = final_df["Weight"].apply(lambda x: f"{x:.1%}")
+                    final_df[metric_col] = final_df[metric_col].apply(lambda x: f"{x:.2f}")
+                    final_df["RSI"] = final_df["RSI"].apply(lambda x: f"{x:.1f}")
+                    
+                    st.dataframe(final_df, use_container_width=True)
                 
-                # --- EXPORT TO TRADINGVIEW SECTION ---
+                # --- EXPORT TO TRADINGVIEW ---
                 with col_export:
                     with st.expander("📤 Export to TradingView"):
                         st.markdown("**1. Pine Script (Charts):** Copy and paste into Pine Editor.")
-                        pine_code = generate_pinescript(df_opt)
+                        pine_code = generate_pinescript(df_opt) # Use original df_opt (no total row)
                         st.code(pine_code, language="pinescript")
                         
                         st.divider()
                         st.markdown("**2. JSON (Bots):** For webhook alerts.")
-                        # Create simple JSON dict
                         json_data = df_opt[["Ticker", "Weight"]].to_json(orient="records")
                         st.code(json_data, language="json")
 
