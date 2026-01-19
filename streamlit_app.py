@@ -396,16 +396,36 @@ def run_app():
             hist_data = st.session_state["historical_data"]
             price_dict = {t: data['Close'] for t, data in hist_data.items()}
             price_df = pd.DataFrame(price_dict).dropna()
+            
+            # Returns Matrix (Full Universe for Benchmark)
             X = prices_to_returns(price_df)
-            weight_map = dict(zip(df_opt['Ticker'], df_opt['Weight']))
-            strategy_weights = [weight_map.get(t, 0.0) for t in X.columns]
             
-            strategy_portfolio = Portfolio(X=X, weights=strategy_weights, name="Optimized Strategy")
+            # --- FIX: ISOLATE SELECTED ASSETS FOR STRATEGY PORTFOLIO ---
+            selected_tickers = df_opt['Ticker'].tolist()
+            selected_weights = df_opt['Weight'].tolist()
+            
+            # Filter X to only include selected assets for the strategy portfolio
+            # This ensures charts only show relevant assets
+            X_strategy = X[selected_tickers]
+            
+            # 1. Strategy Portfolio (Subset Data)
+            strategy_portfolio = Portfolio(
+                X=X_strategy, 
+                weights=selected_weights, 
+                name="Optimized Strategy"
+            )
+            
+            # 2. Benchmark Portfolio (Full Universe Data)
             n_assets = len(X.columns)
-            benchmark_portfolio = Portfolio(X=X, weights=[1.0/n_assets]*n_assets, name="Equal Weighted Benchmark")
+            benchmark_portfolio = Portfolio(
+                X=X, 
+                weights=[1.0/n_assets]*n_assets, 
+                name="Equal Weighted Benchmark (Full Universe)"
+            )
             
+            # 3. Analyze Population
             pop = Population([strategy_portfolio, benchmark_portfolio])
-            st.markdown("Comparing your optimized portfolio against an equal-weighted benchmark.")
+            st.markdown("Comparing your optimized portfolio against an equal-weighted benchmark of the full universe.")
             
             st.subheader("Cumulative Returns")
             try:
