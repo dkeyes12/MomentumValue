@@ -7,7 +7,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import time
 
-# --- SKFOLIO IMPORTS ---
+# --- OPTIONAL SKFOLIO IMPORTS ---
 try:
     from skfolio import Portfolio, Population
     from skfolio.preprocessing import prices_to_returns
@@ -16,53 +16,27 @@ except ImportError:
     SKFOLIO_AVAILABLE = False
 
 # --- CONFIGURATION ---
-def main():
-    # Only runs when called directly
-    st.set_page_config(page_title="Portfolio Optimizer [MomentumValue + Backtest]", layout="wide")
-    try:
-        run_app()
-    except Exception as e:
-        st.error(f"An error occurred: {e}")
+st.set_page_config(page_title="MomentumValue Unified Dashboard", layout="wide")
 
-# --- DATASETS ---
-ETF_TICKERS = [
-    {"Ticker": "XLK", "Sector": "Technology"},
-    {"Ticker": "XLV", "Sector": "Health Care"},
-    {"Ticker": "XLF", "Sector": "Financials"},
-    {"Ticker": "XLRE", "Sector": "Real Estate"},
-    {"Ticker": "XLE", "Sector": "Energy"},
-    {"Ticker": "XLB", "Sector": "Materials"},
-    {"Ticker": "XLY", "Sector": "Cons. Discretionary"},
-    {"Ticker": "XLP", "Sector": "Cons. Staples"},
-    {"Ticker": "XLI", "Sector": "Industrials"},
-    {"Ticker": "XLU", "Sector": "Utilities"},
-    {"Ticker": "XLC", "Sector": "Communication"}
-]
+# --- SHARED DATASETS ---
+BENCHMARK_SECTOR_DATA = {
+    "Information Technology": 0.315, "Financials": 0.132, "Health Care": 0.124,
+    "Consumer Discretionary": 0.103, "Communication Services": 0.088, "Industrials": 0.085,
+    "Consumer Staples": 0.061, "Energy": 0.038, "Utilities": 0.024,
+    "Real Estate": 0.023, "Materials": 0.022
+}
 
 STOCK_TICKERS = [
-    {"Ticker": "NVDA", "Sector": "Technology"},
-    {"Ticker": "AAPL", "Sector": "Technology"},
-    {"Ticker": "MSFT", "Sector": "Technology"},
-    {"Ticker": "AMZN", "Sector": "Cons. Disc."},
-    {"Ticker": "GOOGL", "Sector": "Comm. Svcs"},
-    {"Ticker": "META", "Sector": "Comm. Svcs"},
-    {"Ticker": "TSLA", "Sector": "Cons. Disc."},
-    {"Ticker": "JPM", "Sector": "Financials"},
-    {"Ticker": "V", "Sector": "Financials"},
-    {"Ticker": "JNJ", "Sector": "Health Care"},
-    {"Ticker": "LLY", "Sector": "Health Care"},
-    {"Ticker": "XOM", "Sector": "Energy"}
+    {"Ticker": "NVDA", "Sector": "Technology"}, {"Ticker": "AAPL", "Sector": "Technology"},
+    {"Ticker": "MSFT", "Sector": "Technology"}, {"Ticker": "AMZN", "Sector": "Cons. Disc."},
+    {"Ticker": "GOOGL", "Sector": "Comm. Svcs"}, {"Ticker": "META", "Sector": "Comm. Svcs"},
+    {"Ticker": "TSLA", "Sector": "Cons. Disc."}, {"Ticker": "JPM", "Sector": "Financials"},
+    {"Ticker": "V", "Sector": "Financials"}, {"Ticker": "JNJ", "Sector": "Health Care"},
+    {"Ticker": "LLY", "Sector": "Health Care"}, {"Ticker": "XOM", "Sector": "Energy"}
 ]
 
-# --- CACHE MANAGEMENT ---
-def clear_cache_callback():
-    st.cache_data.clear()
-    keys_to_drop = ["market_data", "opt_results", "historical_data"]
-    for k in keys_to_drop:
-        if k in st.session_state:
-            del st.session_state[k]
+# --- SHARED HELPER FUNCTIONS ---
 
-# --- HELPER FUNCTIONS ---
 def calculate_rsi(series, window=14):
     delta = series.diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=window).mean()
@@ -70,437 +44,305 @@ def calculate_rsi(series, window=14):
     rs = gain / loss
     return 100 - (100 / (1 + rs))
 
-def generate_pinescript(df_results):
-    """Generates TradingView Pine Script to display allocation table."""
-    script = [
-        "//@version=5",
-        "indicator('MomentumValue Portfolio Allocation', overlay=true)",
-        "var table tbl = table.new(position.top_right, 2, " + str(len(df_results) + 2) + ", border_width=1)",
-        "if barstate.islast",
-        "    table.cell(tbl, 0, 0, 'Asset', bgcolor=color.new(color.blue, 30), text_color=color.white)",
-        "    table.cell(tbl, 1, 0, 'Weight', bgcolor=color.new(color.blue, 30), text_color=color.white)"
-    ]
+def plot_quadrant_chart(df, metric_col, rsi_col, weight_col=None, title="Asset Selection Matrix"):
+    """
+    Shared function to plot the 2x2 Value vs Momentum matrix.
+    """
+    # Dynamic Thresholds
+    data_median = df[metric_col].median()
+    if data_median > 5.0: # Likely P/E
+        VAL_THRESHOLD = 25; MAX_X = max(60, df[metric_col].max() * 1.1)
+        x_label = "P/E Ratio (Lower is Better)"
+    else: # Likely PEG
+        VAL_THRESHOLD = 1.5; MAX_X = 4.0
+        x_label = "PEG Ratio (Lower is Better)"
     
-    # Sort for Pine Script display as well
-    df_sorted = df_results.sort_values(by="Weight", ascending=False)
+    fig = go.Figure()
     
-    for i, row in df_sorted.iterrows():
-        ticker = row['Ticker']
-        weight = f"{row['Weight']*100:.1f}%"
-        # row_idx logic for table positioning
-        script.append(f"    table.cell(tbl, 0, {i+1}, '{ticker}', bgcolor=color.new(color.gray, 90), text_color=color.black)")
-        script.append(f"    table.cell(tbl, 1, {i+1}, '{weight}', bgcolor=color.new(color.gray, 90), text_color=color.black)")
-        
-    return "\n".join(script)
+    # Bubble size logic
+    if weight_col and weight_col in df.columns:
+        sizes = df[weight_col] * 200  # Scale up for visibility
+        hover_txt = df[weight_col].apply(lambda x: f"{x:.1%}")
+    else:
+        sizes = 15
+        hover_txt = ""
+
+    fig.add_trace(go.Scatter(
+        x=df[metric_col].clip(upper=MAX_X),
+        y=df[rsi_col],
+        mode='markers+text',
+        text=df['Ticker'],
+        textposition="top center",
+        marker=dict(
+            size=sizes,
+            color=df[rsi_col],
+            colorscale='RdYlGn',
+            showscale=True,
+            colorbar=dict(title="RSI Strength")
+        ),
+        hovertemplate="<b>%{text}</b><br>RSI: %{y:.1f}<br>Valuation: %{x:.2f}<extra></extra>"
+    ))
+
+    # Draw Quadrants
+    fig.add_shape(type="rect", x0=0, y0=50, x1=VAL_THRESHOLD, y1=100, fillcolor="green", opacity=0.1, layer="below", line_width=0)
+    fig.add_shape(type="rect", x0=VAL_THRESHOLD, y0=50, x1=MAX_X, y1=100, fillcolor="yellow", opacity=0.1, layer="below", line_width=0)
+    fig.add_shape(type="rect", x0=0, y0=0, x1=VAL_THRESHOLD, y1=50, fillcolor="yellow", opacity=0.1, layer="below", line_width=0)
+    fig.add_shape(type="rect", x0=VAL_THRESHOLD, y0=0, x1=MAX_X, y1=50, fillcolor="red", opacity=0.1, layer="below", line_width=0)
+    
+    # Labels
+    fig.add_annotation(x=VAL_THRESHOLD/2, y=95, text="VALUE + MOMENTUM", showarrow=False, font=dict(color="green", weight="bold"))
+    fig.add_annotation(x=VAL_THRESHOLD + (MAX_X-VAL_THRESHOLD)/2, y=95, text="EXPENSIVE MOMENTUM", showarrow=False, font=dict(color="orange", size=10))
+    fig.add_annotation(x=VAL_THRESHOLD/2, y=5, text="WEAK / VALUE TRAP", showarrow=False, font=dict(color="orange", size=10))
+    fig.add_annotation(x=VAL_THRESHOLD + (MAX_X-VAL_THRESHOLD)/2, y=5, text="EXPENSIVE & WEAK", showarrow=False, font=dict(color="red", weight="bold"))
+
+    fig.update_layout(title=title, xaxis_title=x_label, yaxis_title="Momentum (RSI)", height=550)
+    return fig
 
 @st.cache_data
 def process_bulk_data(tickers, sector_map, mode, period="5y"):
     ticker_list = [t.upper().strip() for t in tickers if t.strip()]
     if not ticker_list: return None, None
-
+    
     # Bulk download
-    bulk_data = yf.download(ticker_list, period=period, group_by='ticker', auto_adjust=False)
+    try:
+        bulk_data = yf.download(ticker_list, period=period, group_by='ticker', auto_adjust=False)
+    except Exception:
+        return None, None
     
     snapshot_data = []
     hist_data = {}
 
-    try:
-        my_bar = st.progress(0, text="Fetching valuation metrics...")
-    except:
-        my_bar = None
-
-    total_tickers = len(ticker_list)
-
-    for idx, t in enumerate(ticker_list):
-        if my_bar:
-            my_bar.progress((idx + 1) / total_tickers, text=f"Fetching data for {t}...")
-        
+    for t in ticker_list:
         try:
-            if len(ticker_list) == 1:
-                df = bulk_data.copy()
-            else:
-                df = bulk_data[t].copy()
+            if len(ticker_list) == 1: df = bulk_data.copy()
+            else: df = bulk_data[t].copy()
             
             if df.empty: continue
-
             df = df.dropna(how='all')
             df['SMA_50'] = df['Close'].rolling(window=50).mean()
             df['SMA_200'] = df['Close'].rolling(window=200).mean()
             df['RSI'] = calculate_rsi(df['Close'])
-            
             hist_data[t] = df
 
-            current_price = df['Close'].iloc[-1]
-            start_price = df['Close'].iloc[0]
-            pct_return = (current_price - start_price) / start_price if start_price > 0 else 0
-            
+            # Metrics
             rsi = df['RSI'].iloc[-1]
-            volatility = df['Close'].pct_change().std() * np.sqrt(252)
+            vol = df['Close'].pct_change().std() * np.sqrt(252)
+            ret = (df['Close'].iloc[-1] - df['Close'].iloc[0]) / df['Close'].iloc[0]
             
-            # --- VALUATION FETCHING ---
-            val_metric = None
+            # Valuation
             try:
-                stock = yf.Ticker(t)
-                stock_info = stock.info
-                
-                if mode == "Popular and widely followed stocks (P/E/G)":
-                    val_metric = stock_info.get('pegRatio')
-                    if val_metric is None:
-                        val_metric = stock_info.get('trailingPE')
-                        if val_metric is None:
-                            val_metric = stock_info.get('forwardPE')
-                else: 
-                    val_metric = stock_info.get('trailingPE')
-                    if val_metric is None: val_metric = stock_info.get('forwardPE')
-                
-                time.sleep(0.1)
-            except Exception:
-                val_metric = None
-            
-            if val_metric is not None and val_metric > 0:
-                row = {
-                    "Ticker": t,
-                    "Sector": sector_map.get(t, "Unknown"),
-                    "Price": current_price,
-                    "RSI": rsi,
-                    "Volatility": volatility,
-                    "Return": pct_return
-                }
-                if mode == "Popular and widely followed stocks (P/E/G)":
-                    row["PEG"] = val_metric
-                    row["PE"] = np.nan 
+                info = yf.Ticker(t).info
+                if "P/E/G" in mode:
+                    val = info.get('pegRatio') or info.get('trailingPE')
                 else:
-                    row["PE"] = val_metric
-                    row["PEG"] = np.nan 
-                snapshot_data.append(row)
-
-        except Exception:
-            continue
-    
-    if my_bar:
-        my_bar.empty()
+                    val = info.get('trailingPE') or info.get('forwardPE')
+            except: val = np.nan
+            
+            if val and val > 0:
+                snapshot_data.append({
+                    "Ticker": t, "Sector": sector_map.get(t, "Unknown"),
+                    "Price": df['Close'].iloc[-1], "RSI": rsi,
+                    "Volatility": vol, "Return": ret,
+                    "PEG" if "P/E/G" in mode else "PE": val
+                })
+        except: continue
             
     return pd.DataFrame(snapshot_data), hist_data
 
 def optimize_portfolio(df, objective_type, max_weight_per_asset, mode):
     if df is None or df.empty: return pd.DataFrame()
-    
     solver = pywraplp.Solver.CreateSolver('GLOP')
     if not solver: return None
 
-    weights = []
-    for i in range(len(df)):
-        weights.append(solver.NumVar(0.0, max_weight_per_asset, f'w_{i}'))
-
+    weights = [solver.NumVar(0.0, max_weight_per_asset, f'w_{i}') for i in range(len(df))]
+    
+    # Constraint: Sum = 1
     constraint_sum = solver.Constraint(1.0, 1.0)
-    for w in weights:
-        constraint_sum.SetCoefficient(w, 1)
+    for w in weights: constraint_sum.SetCoefficient(w, 1)
 
+    # Objective
+    metric_col = "PEG" if "P/E/G" in mode else "PE"
+    # Basic scoring: RSI/100 (Momentum) + 1/Valuation (Value)
+    # Note: For PE, we scale it to match magnitude of RSI
+    if metric_col == "PEG": scores = (df['RSI'] / 100) + (1 / df['PEG']) 
+    else: scores = (df['RSI'] / 100) + ((1 / df['PE']) * 50)
+    
     objective = solver.Objective()
-    
-    if mode == "Popular and widely followed stocks (P/E/G)":
-        scores = (df['RSI'] / 100) + (1 / df['PEG']) 
-    else:
-        scores = (df['RSI'] / 100) + ((1 / df['PE']) * 50)
-    
-    if objective_type == "Maximize Gain (Score)":
-        for i, w in enumerate(weights):
-            objective.SetCoefficient(w, scores.iloc[i])
+    if "Gain" in objective_type:
+        for i, w in enumerate(weights): objective.SetCoefficient(w, scores.iloc[i])
         objective.SetMaximization()
-    elif objective_type == "Minimize Loss (Volatility)":
+    else:
+        # Minimize Volatility subject to Quality constraint
         avg_score = scores.mean()
-        constraint_quality = solver.Constraint(avg_score, solver.infinity())
-        for i, w in enumerate(weights):
-            constraint_quality.SetCoefficient(w, scores.iloc[i])
-        for i, w in enumerate(weights):
-            objective.SetCoefficient(w, df['Volatility'].iloc[i])
+        c_qual = solver.Constraint(avg_score, solver.infinity())
+        for i, w in enumerate(weights): c_qual.SetCoefficient(w, scores.iloc[i])
+        for i, w in enumerate(weights): objective.SetCoefficient(w, df['Volatility'].iloc[i])
         objective.SetMinimization()
 
     status = solver.Solve()
-
     if status == pywraplp.Solver.OPTIMAL:
         results = []
         for i, w in enumerate(weights):
-            if w.solution_value() > 0.001: 
-                row = {
-                    "Ticker": df['Ticker'].iloc[i],
-                    "Sector": df['Sector'].iloc[i],
-                    "Weight": w.solution_value(),
-                    "RSI": df['RSI'].iloc[i],
-                    "Volatility": df['Volatility'].iloc[i]
-                }
-                if mode == "Popular and widely followed stocks (P/E/G)":
-                    row["PEG"] = df['PEG'].iloc[i]
-                else:
-                    row["PE"] = df['PE'].iloc[i]
+            if w.solution_value() > 0.001:
+                row = df.iloc[i].to_dict()
+                row["Weight"] = w.solution_value()
                 results.append(row)
         return pd.DataFrame(results)
-    else:
-        return pd.DataFrame()
+    return pd.DataFrame()
 
-def run_app():
-    if "market_data" not in st.session_state: st.session_state["market_data"] = None
-    if "opt_results" not in st.session_state: st.session_state["opt_results"] = None
-    if "historical_data" not in st.session_state: st.session_state["historical_data"] = {}
-
-    st.title("⚖️ Portfolio Optimizer & Backtester")
+# --- MODE 1: SECTOR REBALANCER LOGIC ---
+def run_sector_rebalancer():
+    st.header("Mode 1: Top-Down S&P 500 Rebalancer")
+    st.markdown("Adjust broad market sector weights to cap specific risks (e.g., Tech concentration).")
     
-    if not SKFOLIO_AVAILABLE:
-        st.error("⚠️ `skfolio` library not found. Please install it using `pip install skfolio` to enable backtesting features.")
-
-    with st.sidebar:
-        st.header("1. Settings")
-        mode_select = st.radio(
-            "Universe:", 
-            ["S&P 500 Sectors (P/E)", "Popular and widely followed stocks (P/E/G)"], 
-            on_change=clear_cache_callback
-        )
-        period_select = st.selectbox("Lookback Period:", ["1y", "2y", "3y", "5y"], index=3)
-        st.divider()
-        st.header("2. Optimization")
-        obj_choice = st.radio("Goal", ["Maximize Gain (Score)", "Minimize Loss (Volatility)"])
-        max_concentration = st.slider("Max Allocation", 0.05, 1.0, 0.25, 0.05)
-        st.divider()
-        if st.button("⚠️ Force Clear Cache"):
-            clear_cache_callback()
-            st.rerun()
-
-    tab_opt, tab_backtest = st.tabs(["⚙️ Optimization & Analysis", "📈 Backtesting (skfolio)"])
-
-    # === TAB 1: OPTIMIZATION ===
-    with tab_opt:
-        st.subheader(f"1. Define Universe: {mode_select}")
+    current_tech_pct = BENCHMARK_SECTOR_DATA["Information Technology"] * 100
+    
+    col_slide, col_metrics = st.columns([1, 2])
+    with col_slide:
+        tech_cap = st.slider("Max Tech Exposure (%)", 0.0, 60.0, float(current_tech_pct), 0.5)
         
-        if "last_mode" not in st.session_state or st.session_state["last_mode"] != mode_select:
-            new_defaults = STOCK_TICKERS if mode_select == "Popular and widely followed stocks (P/E/G)" else ETF_TICKERS
-            st.session_state["user_tickers"] = pd.DataFrame(new_defaults)
-            st.session_state["last_mode"] = mode_select
+    # Logic
+    target_tech = tech_cap / 100.0
+    rem_weight_new = 1.0 - target_tech
+    rem_weight_old = 1.0 - BENCHMARK_SECTOR_DATA["Information Technology"]
+    scale = rem_weight_new / rem_weight_old if rem_weight_old > 0 else 0
+    
+    new_alloc = {}
+    for sec, w in BENCHMARK_SECTOR_DATA.items():
+        if sec == "Information Technology": new_alloc[sec] = target_tech
+        else: new_alloc[sec] = w * scale
+        
+    df_alloc = pd.DataFrame([{"Sector": k, "Benchmark": v, "Custom": new_alloc[k]} for k, v in BENCHMARK_SECTOR_DATA.items()])
+    df_alloc["Delta"] = df_alloc["Custom"] - df_alloc["Benchmark"]
+    
+    with col_metrics:
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Tech Weight", f"{tech_cap:.1f}%", f"{tech_cap - current_tech_pct:.1f}%", delta_color="inverse")
+        active_share = np.sum(np.abs(df_alloc["Custom"] - df_alloc["Benchmark"])) / 2
+        m2.metric("Active Share", f"{active_share:.1%}")
+        top_ben = df_alloc[df_alloc["Sector"]!="Information Technology"].sort_values("Delta", ascending=False).iloc[0]
+        m3.metric("Top Beneficiary", top_ben["Sector"], f"+{top_ben['Delta']:.1%}")
 
-        col_input, col_action = st.columns([3, 1])
-        with col_input:
-            edited_df = st.data_editor(
-                st.session_state["user_tickers"], 
-                column_config={"Ticker": st.column_config.TextColumn("Ticker", width="small")},
-                num_rows="dynamic", use_container_width=True, key=f"editor_{mode_select}"
-            )
-        with col_action:
-            st.write("### ")
-            if st.button("🚀 Run Optimization", type="primary", use_container_width=True):
-                tickers = edited_df["Ticker"].tolist()
-                sector_map = dict(zip(edited_df['Ticker'], edited_df['Sector']))
-                if len(tickers) < 2:
-                    st.error("Need 2+ tickers.")
+    # Charts
+    tab1, tab2 = st.tabs(["📊 Sector Weights", "📝 Data"])
+    with tab1:
+        fig = go.Figure()
+        fig.add_trace(go.Bar(x=df_alloc["Sector"], y=df_alloc["Benchmark"], name="Benchmark", marker_color="lightgray"))
+        fig.add_trace(go.Bar(x=df_alloc["Sector"], y=df_alloc["Custom"], name="Rebalanced", marker_color="#4F8BF9"))
+        fig.update_layout(barmode='group', height=400, yaxis_tickformat='.0%')
+        st.plotly_chart(fig, use_container_width=True)
+    with tab2:
+        st.dataframe(df_alloc.style.format("{:.1%}"), use_container_width=True)
+
+# --- MODE 2: STOCK OPTIMIZER LOGIC ---
+def run_stock_optimizer():
+    st.header("Mode 2: Bottom-Up Stock Optimizer")
+    
+    # Inputs
+    col_conf, col_univ = st.columns([1, 2])
+    with col_conf:
+        mode_sel = st.radio("Metrics:", ["Popular (P/E/G)", "Standard (P/E)"])
+        obj = st.radio("Objective:", ["Maximize Gain", "Minimize Volatility"])
+        max_w = st.slider("Max Weight", 0.05, 1.0, 0.25, 0.05)
+        
+    with col_univ:
+        if "user_tickers" not in st.session_state: 
+            st.session_state["user_tickers"] = pd.DataFrame(STOCK_TICKERS)
+        edited = st.data_editor(st.session_state["user_tickers"], num_rows="dynamic", use_container_width=True)
+        
+        if st.button("🚀 Optimize Portfolio", type="primary"):
+            with st.spinner("Fetching data..."):
+                t_list = edited["Ticker"].tolist()
+                s_map = dict(zip(edited["Ticker"], edited["Sector"]))
+                df_mkt, hist = process_bulk_data(t_list, s_map, mode_sel)
+                
+                if df_mkt is not None and not df_mkt.empty:
+                    df_res = optimize_portfolio(df_mkt, obj, max_w, mode_sel)
+                    st.session_state["opt_res"] = df_res
+                    st.session_state["mkt_data"] = df_mkt
+                    st.session_state["hist_data"] = hist
                 else:
-                    with st.spinner(f"Fetching {period_select} data..."):
-                        df_mkt, hist_data = process_bulk_data(tickers, sector_map, mode_select, period=period_select)
-                        if df_mkt is not None and not df_mkt.empty:
-                            df_res = optimize_portfolio(df_mkt, obj_choice, max_concentration, mode_select)
-                            st.session_state["market_data"] = df_mkt
-                            st.session_state["historical_data"] = hist_data
-                            st.session_state["opt_results"] = df_res
-                        else:
-                            st.error("Fetch failed.")
+                    st.error("Data fetch failed.")
 
-        if st.session_state["market_data"] is not None:
-            df_market = st.session_state["market_data"]
-            metric_col = "PEG" if mode_select == "Popular and widely followed stocks (P/E/G)" else "PE"
+    # Results
+    if "opt_res" in st.session_state and st.session_state["opt_res"] is not None:
+        df_res = st.session_state["opt_res"]
+        df_mkt = st.session_state["mkt_data"]
+        hist = st.session_state["hist_data"]
+        metric_col = "PEG" if "P/E/G" in mode_sel else "PE"
 
-            if st.session_state["opt_results"] is not None and not st.session_state["opt_results"].empty:
-                df_opt = st.session_state["opt_results"]
-
-                # 2. Portfolio Visualization
-                st.subheader("2. Portfolio Visualization")
-                RSI_THRESHOLD = 50
-                data_median = df_market[metric_col].median()
-                
-                if data_median > 5.0:
-                    VAL_THRESHOLD = 25; MAX_X = max(60, df_market[metric_col].max() * 1.1)
-                    x_label = "P/E Ratio"
-                else:
-                    VAL_THRESHOLD = 1.5; MAX_X = 4.0
-                    x_label = "PEG Ratio"
-
-                fig_quad = go.Figure()
-                rem = df_market[~df_market['Ticker'].isin(df_opt['Ticker'])]
-                fig_quad.add_trace(go.Scatter(x=rem[metric_col].clip(upper=MAX_X), y=rem['RSI'], mode='markers+text', text=rem['Ticker'], name='Universe', marker=dict(color='gray', size=10)))
-                fig_quad.add_trace(go.Scatter(x=df_opt[metric_col].clip(upper=MAX_X), y=df_opt['RSI'], mode='markers+text', text=df_opt['Ticker'], name='Selected', marker=dict(color='blue', size=15)))
-                
-                fig_quad.add_shape(type="rect", x0=0, y0=50, x1=VAL_THRESHOLD, y1=100, fillcolor="green", opacity=0.1, layer="below", line_width=0)
-                fig_quad.add_shape(type="rect", x0=VAL_THRESHOLD, y0=50, x1=MAX_X, y1=100, fillcolor="yellow", opacity=0.1, layer="below", line_width=0)
-                fig_quad.add_shape(type="rect", x0=0, y0=0, x1=VAL_THRESHOLD, y1=50, fillcolor="yellow", opacity=0.1, layer="below", line_width=0)
-                fig_quad.add_shape(type="rect", x0=VAL_THRESHOLD, y0=0, x1=MAX_X, y1=50, fillcolor="red", opacity=0.1, layer="below", line_width=0)
-                
-                fig_quad.add_annotation(x=VAL_THRESHOLD/2, y=90, text="VALUE + MOMENTUM", showarrow=False, font=dict(color="green", size=14, weight="bold"))
-                fig_quad.add_annotation(x=VAL_THRESHOLD + (MAX_X-VAL_THRESHOLD)/2, y=90, text="EXPENSIVE MOMENTUM", showarrow=False, font=dict(color="orange", size=10))
-                fig_quad.add_annotation(x=VAL_THRESHOLD/2, y=10, text="WEAK / VALUE TRAP", showarrow=False, font=dict(color="orange", size=10))
-                fig_quad.add_annotation(x=VAL_THRESHOLD + (MAX_X-VAL_THRESHOLD)/2, y=10, text="EXPENSIVE & WEAK", showarrow=False, font=dict(color="red", size=14, weight="bold"))
-
-                fig_quad.update_layout(title="Asset Selection Matrix", xaxis_title=x_label, yaxis_title="RSI (Momentum)", height=500)
-                st.plotly_chart(fig_quad, use_container_width=True)
-
-                # 3. Optimal Allocation
-                st.divider()
-                st.subheader("3. Optimal Allocation")
-                
-                with st.expander("📊 Strategy Breakdown: Allocation Methodology"):
-                    st.markdown("""
-                    This model employs a multi-factor approach, optimizing for **Earnings Yield** (Value) and **Relative Strength** (Momentum).
-                    
-                    * **Weighting:** The optimal capital allocation coefficient derived from the linear optimization solver.
-                    * **RSI (Momentum Factor):** The portfolio RSI is the **Weighted Arithmetic Mean** of individual constituents.
-                    * **P/E (Value Factor):** We utilize the **Weighted Harmonic Mean** rather than a simple arithmetic average.
-                    
-                    
-
-                    **Why Harmonic Mean?** Averaging valuation ratios (like P/E) directly using an arithmetic mean creates a mathematical bias that overstates the "expensiveness" of the portfolio. The Harmonic Mean correctly averages the underlying "Earnings Yields" (E/P), providing a true reflection of the portfolio's aggregate valuation.
-                    """)
-
-                col_table, col_export = st.columns([2, 1])
-                
-                with col_table:
-                    # Sort results by weight
-                    disp_df = df_opt.copy().sort_values(by="Weight", ascending=False)
-                    
-                    # --- CALCULATE TOTALS ---
-                    total_weight = disp_df['Weight'].sum()
-                    
-                    # Weighted Avg RSI
-                    w_rsi = (disp_df['Weight'] * disp_df['RSI']).sum() / total_weight if total_weight > 0 else 0
-                    
-                    # Harmonic Mean for Valuation (P/E or PEG)
-                    # Avoid division by zero
-                    if (disp_df[metric_col] == 0).any():
-                        w_val = np.nan
-                    else:
-                        w_val_inv = (disp_df['Weight'] / disp_df[metric_col]).sum()
-                        w_val = total_weight / w_val_inv if w_val_inv > 0 else 0
-                    
-                    # Weighted Avg Volatility
-                    w_vol = (disp_df['Weight'] * disp_df['Volatility']).sum() / total_weight if total_weight > 0 else 0
-                    
-                    summary = pd.DataFrame([{
-                        "Ticker": "TOTAL", 
-                        "Sector": "-", 
-                        "Weight": total_weight, 
-                        metric_col: w_val, 
-                        "RSI": w_rsi,
-                        "Volatility": w_vol
-                    }])
-                    
-                    final_df = pd.concat([disp_df, summary], ignore_index=True)
-                    
-                    # Formatting
-                    final_df["Weight"] = final_df["Weight"].apply(lambda x: f"{x:.1%}")
-                    final_df[metric_col] = final_df[metric_col].apply(lambda x: f"{x:.2f}" if pd.notnull(x) else "")
-                    final_df["RSI"] = final_df["RSI"].apply(lambda x: f"{x:.1f}")
-                    final_df["Volatility"] = final_df["Volatility"].apply(lambda x: f"{x:.2%}" if pd.notnull(x) else "")
-                    
-                    st.dataframe(final_df, use_container_width=True)
-                
-                # --- EXPORT TO TRADINGVIEW ---
-                with col_export:
-                    with st.expander("📤 Export to TradingView"):
-                        st.markdown("**1. Pine Script (Charts):** Copy and paste into Pine Editor.")
-                        pine_code = generate_pinescript(df_opt) 
-                        st.code(pine_code, language="pinescript")
-                        
-                        st.divider()
-                        st.markdown("**2. JSON (Bots):** For webhook alerts.")
-                        df_json = df_opt.sort_values(by="Weight", ascending=False)
-                        json_data = df_json[["Ticker", "Weight"]].to_json(orient="records")
-                        st.code(json_data, language="json")
-
-                # 4. Technical Analysis
-                st.subheader("4. Technical Analysis")
-                if st.session_state["historical_data"]:
-                    sel_t = st.selectbox("View Chart:", list(st.session_state["historical_data"].keys()))
-                    df_c = st.session_state["historical_data"][sel_t]
-                    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.7, 0.3])
-                    fig.add_trace(go.Candlestick(x=df_c.index, open=df_c['Open'], high=df_c['High'], low=df_c['Low'], close=df_c['Close'], name='OHLC'), row=1, col=1)
-                    fig.add_trace(go.Scatter(x=df_c.index, y=df_c['SMA_50'], line=dict(color='orange'), name='SMA 50'), row=1, col=1)
-                    fig.add_trace(go.Scatter(x=df_c.index, y=df_c['SMA_200'], line=dict(color='blue', width=2), name='SMA 200'), row=1, col=1)
-                    fig.add_trace(go.Scatter(x=df_c.index, y=df_c['RSI'], line=dict(color='purple'), name='RSI'), row=2, col=1)
-                    fig.add_hline(y=70, row=2, col=1, line_dash="dot", line_color="red")
-                    fig.add_hline(y=30, row=2, col=1, line_dash="dot", line_color="green")
-                    fig.update_layout(height=500, xaxis_rangeslider_visible=False)
-                    st.plotly_chart(fig, use_container_width=True)
-
-            st.divider()
-            st.subheader("5. Market Data Analysis")
-            st.dataframe(
-                df_market[["Ticker", "Sector", metric_col, "RSI", "Return", "Volatility"]].style.format({
-                    metric_col: "{:.2f}", "RSI": "{:.2f}", "Return": "{:.2%}", "Volatility": "{:.2%}"
-                }),
-                use_container_width=True, height=(len(df_market)+1)*35
-            )
-
-        # --- LOGIC SUMMARY ---
+        # 1. Quadrant Chart (Shared Function)
         st.divider()
-        with st.expander("ℹ️ How the Optimization Logic Works"):
-            st.markdown(r"""
-            ### 1. The Scoring Formula
-            The optimizer assigns a **"Growth-Momentum Score"** to every asset:
-            
-            $$
-            \text{Score} = \underbrace{\left( \frac{\text{RSI}}{100} \right)}_{\text{Momentum}} + \underbrace{\left( \frac{1}{\text{PEG Ratio}} \right)}_{\text{Value}}
-            $$
+        st.subheader("1. Asset Selection Matrix")
+        # We pass the OPTIMIZED weights to size the bubbles
+        fig_quad = plot_quadrant_chart(df_res, metric_col, "RSI", weight_col="Weight")
+        st.plotly_chart(fig_quad, use_container_width=True)
 
-            ### 2. Linear vs. Quadratic Optimization 
+        # 2. Allocation Table
+        st.subheader("2. Optimal Allocation")
+        col_tbl, col_tv = st.columns([2, 1])
+        with col_tbl:
+            disp = df_res.sort_values("Weight", ascending=False).copy()
+            # Totals
+            tot_w = disp["Weight"].sum()
+            w_rsi = (disp["Weight"]*disp["RSI"]).sum()/tot_w
+            w_vol = (disp["Weight"]*disp["Volatility"]).sum()/tot_w
+            # Harmonic Mean for Valuation
+            w_val_inv = (disp["Weight"]/disp[metric_col]).sum()
+            w_val = tot_w/w_val_inv if w_val_inv > 0 else 0
             
+            sum_row = pd.DataFrame([{"Ticker": "TOTAL", "Weight": tot_w, "RSI": w_rsi, "Volatility": w_vol, metric_col: w_val}])
+            final = pd.concat([disp, sum_row], ignore_index=True)
             
+            st.dataframe(final.style.format({"Weight": "{:.1%}", "RSI": "{:.1f}", "Volatility": "{:.1%}", metric_col: "{:.2f}"}), use_container_width=True)
+            
+        with col_tv:
+            with st.expander("📤 TradingView Export"):
+                st.write("Copy/Paste to Pine Editor:")
+                lines = ["//@version=5", "indicator('Portfolio', overlay=true)", f"var table t = table.new(position.top_right, 2, {len(df_res)+1})"]
+                for i, r in df_res.iterrows():
+                    lines.append(f"table.cell(t, 0, {i}, '{r['Ticker']}')")
+                    lines.append(f"table.cell(t, 1, {i}, '{r['Weight']*100:.1f}%')")
+                st.code("\n".join(lines))
 
-            * **Linear Programming (Factor Exposure):** This tool utilizes Linear Programming (GLOP solver) to maximize direct factor exposure. Instead of minimizing variance through correlation, we mitigate risk via **concentration constraints** (hard limits on max allocation). This allows for a computationally efficient ($O(n)$) maximization of the 'Growth + Momentum' alpha score without the instability often introduced by covariance estimation errors in small samples.
-            * **Quadratic Programming (MPT):** Modern Portfolio Theory typically employs Quadratic Programming to minimize portfolio variance ($\sigma^2$). This requires calculating the full covariance matrix $\Sigma$ to account for pairwise asset correlations ($O(n^2)$ complexity). It optimizes for the lowest risk at a given return level.
-            """)
-
-    # === TAB 2: BACKTESTING ===
-    with tab_backtest:
-        st.header("📈 Historical Backtest (skfolio)")
-        if not SKFOLIO_AVAILABLE:
-            st.warning("Please install skfolio to see backtesting results.")
-        elif st.session_state["opt_results"] is None:
-            st.info("Please run the optimization in the first tab to generate a portfolio to backtest.")
+        # 3. Backtest (skfolio)
+        st.divider()
+        st.subheader("3. Backtest Analysis")
+        if SKFOLIO_AVAILABLE and hist:
+            try:
+                # Prepare data
+                p_df = pd.DataFrame({t: d['Close'] for t, d in hist.items()}).dropna()
+                X = prices_to_returns(p_df)
+                
+                # Filter for Strategy
+                sel_ticks = df_res["Ticker"].tolist()
+                sel_ws = df_res["Weight"].tolist()
+                X_strat = X[sel_ticks]
+                
+                strat = Portfolio(X=X_strat, weights=sel_ws, name="Optimized")
+                bench = Portfolio(X=X, weights=[1/len(X.columns)]*len(X.columns), name="Equal Weight Universe")
+                
+                pop = Population([strat, bench])
+                
+                c1, c2 = st.columns(2)
+                with c1: st.plotly_chart(pop.plot_cumulative_returns(), use_container_width=True)
+                with c2: st.dataframe(pop.summary().astype(str), use_container_width=True)
+                
+            except Exception as e:
+                st.error(f"Backtest Error: {e}")
         else:
-            df_opt = st.session_state["opt_results"]
-            hist_data = st.session_state["historical_data"]
-            price_dict = {t: data['Close'] for t, data in hist_data.items()}
-            price_df = pd.DataFrame(price_dict).dropna()
-            X = prices_to_returns(price_df)
-            
-            # --- ISOLATE SELECTED ASSETS FOR STRATEGY ---
-            selected_tickers = df_opt['Ticker'].tolist()
-            selected_weights = df_opt['Weight'].tolist()
-            X_strategy = X[selected_tickers]
-            
-            strategy_portfolio = Portfolio(X=X_strategy, weights=selected_weights, name="Optimized Strategy")
-            
-            # Benchmark uses FULL universe
-            n_assets = len(X.columns)
-            benchmark_portfolio = Portfolio(X=X, weights=[1.0/n_assets]*n_assets, name="Equal Weighted Benchmark")
-            
-            pop = Population([strategy_portfolio, benchmark_portfolio])
-            st.markdown("Comparing your optimized portfolio against an equal-weighted benchmark.")
-            
-            st.subheader("Cumulative Returns")
-            try:
-                fig_cum = pop.plot_cumulative_returns()
-                st.plotly_chart(fig_cum, use_container_width=True)
-            except Exception as e:
-                st.error(f"Could not plot cumulative returns: {e}")
-            
-            st.subheader("Risk & Return Metrics")
-            try:
-                summary_df = pop.summary()
-                st.dataframe(summary_df.astype(str), use_container_width=True)
-            except Exception as e:
-                st.error(f"Could not generate summary: {e}")
-            
-            st.subheader("Portfolio Composition")
-            try:
-                fig_comp = strategy_portfolio.plot_composition()
-                st.plotly_chart(fig_comp, use_container_width=True)
-            except Exception as e:
-                st.error(f"Could not plot composition: {e}")
+            st.warning("skfolio not installed or data missing.")
+
+# --- MAIN CONTROLLER ---
+def main():
+    st.sidebar.title("MomentumValue")
+    app_mode = st.sidebar.radio("Select Mode:", ["Sector Rebalancer (Macro)", "Portfolio Optimizer (Micro)"])
+    st.sidebar.divider()
+    
+    if app_mode == "Sector Rebalancer (Macro)":
+        run_sector_rebalancer()
+    else:
+        run_stock_optimizer()
 
 if __name__ == "__main__":
     main()
