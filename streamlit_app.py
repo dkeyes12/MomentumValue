@@ -53,8 +53,11 @@ def plot_quadrant_chart(df, metric_col, rsi_col, weight_col=None, title="Asset S
 
     # Dynamic Thresholds
     data_median = df[metric_col].median()
+    # Check for NaN to avoid crashes if all metrics are NaN
     if pd.isna(data_median) or data_median > 5.0: # Likely P/E
-        VAL_THRESHOLD = 25; MAX_X = max(60, df[metric_col].max() if not pd.isna(df[metric_col].max()) else 60)
+        max_val = df[metric_col].max()
+        safe_max = 60 if pd.isna(max_val) else max(60, max_val * 1.1)
+        VAL_THRESHOLD = 25; MAX_X = safe_max
         x_label = "P/E Ratio (Lower is Better)"
     else: # Likely PEG
         VAL_THRESHOLD = 1.5; MAX_X = 4.0
@@ -65,10 +68,8 @@ def plot_quadrant_chart(df, metric_col, rsi_col, weight_col=None, title="Asset S
     # Bubble size logic
     if weight_col and weight_col in df.columns:
         sizes = df[weight_col] * 200  # Scale up for visibility
-        hover_txt = df[weight_col].apply(lambda x: f"{x:.1%}")
     else:
         sizes = 15
-        hover_txt = ""
 
     fig.add_trace(go.Scatter(
         x=df[metric_col].clip(upper=MAX_X),
@@ -166,7 +167,6 @@ def optimize_portfolio(df, objective_type, max_weight_per_asset, mode):
     # Objective
     metric_col = "PEG" if "P/E/G" in mode else "PE"
     # Basic scoring: RSI/100 (Momentum) + 1/Valuation (Value)
-    # Note: For PE, we scale it to match magnitude of RSI
     if metric_col == "PEG": scores = (df['RSI'] / 100) + (1 / df['PEG']) 
     else: scores = (df['RSI'] / 100) + ((1 / df['PE']) * 50)
     
@@ -235,7 +235,15 @@ def run_sector_rebalancer():
         fig.update_layout(barmode='group', height=400, yaxis_tickformat='.0%')
         st.plotly_chart(fig, use_container_width=True)
     with tab2:
-        st.dataframe(df_alloc.style.format("{:.1%}"), use_container_width=True)
+        # --- FIX: Apply format dict to prevent formatting Strings as % ---
+        st.dataframe(
+            df_alloc.style.format({
+                "Benchmark": "{:.1%}", 
+                "Custom": "{:.1%}", 
+                "Delta": "{:+.1%}"
+            }), 
+            use_container_width=True
+        )
 
 # --- MODE 2: STOCK OPTIMIZER LOGIC ---
 def run_stock_optimizer():
@@ -297,13 +305,21 @@ def run_stock_optimizer():
             sum_row = pd.DataFrame([{"Ticker": "TOTAL", "Weight": tot_w, "RSI": w_rsi, "Volatility": w_vol, metric_col: w_val}])
             final = pd.concat([disp, sum_row], ignore_index=True)
             
-            st.dataframe(final.style.format({"Weight": "{:.1%}", "RSI": "{:.1f}", "Volatility": "{:.1%}", metric_col: "{:.2f}"}), use_container_width=True)
+            st.dataframe(
+                final.style.format({
+                    "Weight": "{:.1%}", 
+                    "RSI": "{:.1f}", 
+                    "Volatility": "{:.1%}", 
+                    metric_col: "{:.2f}"
+                }), 
+                use_container_width=True
+            )
             
         with col_tv:
             with st.expander("📤 TradingView Export"):
                 st.write("Copy/Paste to Pine Editor:")
                 lines = ["//@version=5", "indicator('Portfolio', overlay=true)", f"var table t = table.new(position.top_right, 2, {len(df_res)+1})"]
-                # Use enumerate to guarantee sequential integers 0..N
+                # Use enumerate to get simple integers 0..N
                 for idx, (i, r) in enumerate(disp.iterrows()):
                     lines.append(f"table.cell(t, 0, {idx}, '{r['Ticker']}')")
                     lines.append(f"table.cell(t, 1, {idx}, '{r['Weight']*100:.1f}%')")
