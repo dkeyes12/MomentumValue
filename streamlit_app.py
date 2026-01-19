@@ -18,7 +18,7 @@ except ImportError:
 # --- CONFIGURATION ---
 st.set_page_config(page_title="MomentumValue Unified Dashboard", layout="wide")
 
-# --- SHARED DATASETS (Standardized Sector Names) ---
+# --- SHARED DATASETS ---
 BENCHMARK_SECTOR_DATA = {
     "Information Technology": 0.315, "Financials": 0.132, "Health Care": 0.124,
     "Consumer Discretionary": 0.103, "Communication Services": 0.088, "Industrials": 0.085,
@@ -26,19 +26,20 @@ BENCHMARK_SECTOR_DATA = {
     "Real Estate": 0.023, "Materials": 0.022
 }
 
-STOCK_TICKERS = [
-    {"Ticker": "NVDA", "Sector": "Information Technology"}, 
-    {"Ticker": "AAPL", "Sector": "Information Technology"},
-    {"Ticker": "MSFT", "Sector": "Information Technology"}, 
-    {"Ticker": "AMZN", "Sector": "Consumer Discretionary"},
-    {"Ticker": "GOOGL", "Sector": "Communication Services"}, 
-    {"Ticker": "META", "Sector": "Communication Services"},
-    {"Ticker": "TSLA", "Sector": "Consumer Discretionary"}, 
-    {"Ticker": "JPM", "Sector": "Financials"},
-    {"Ticker": "V", "Sector": "Financials"}, 
-    {"Ticker": "JNJ", "Sector": "Health Care"},
-    {"Ticker": "LLY", "Sector": "Health Care"}, 
-    {"Ticker": "XOM", "Sector": "Energy"}
+# --- UPDATED: S&P 500 SECTOR UNIVERSE ---
+# Note: Sector names aligned to match BENCHMARK_SECTOR_DATA keys for automatic mapping
+DEFAULT_TICKERS = [
+    {"Ticker": "XLK", "Sector": "Information Technology"}, # Was Technology
+    {"Ticker": "XLV", "Sector": "Health Care"},
+    {"Ticker": "XLF", "Sector": "Financials"},
+    {"Ticker": "XLRE", "Sector": "Real Estate"},
+    {"Ticker": "XLE", "Sector": "Energy"},
+    {"Ticker": "XLB", "Sector": "Materials"},
+    {"Ticker": "XLY", "Sector": "Consumer Discretionary"}, # Was Cons. Discretionary
+    {"Ticker": "XLP", "Sector": "Consumer Staples"},       # Was Cons. Staples
+    {"Ticker": "XLI", "Sector": "Industrials"},
+    {"Ticker": "XLU", "Sector": "Utilities"},
+    {"Ticker": "XLC", "Sector": "Communication Services"}  # Was Communication
 ]
 
 # --- SHARED HELPER FUNCTIONS ---
@@ -253,13 +254,15 @@ def run_stock_optimizer():
         use_sector_limits = False
         if "sector_targets" in st.session_state:
             st.divider()
+            st.markdown("🔗 **Macro Link Active**")
             use_sector_limits = st.checkbox("Apply Sector Limits from Mode 1?", value=True)
             if use_sector_limits:
-                st.caption(f"Constraints active (e.g. Tech ≤ {st.session_state['sector_targets'].get('Information Technology',0):.1%})")
+                tech_lim = st.session_state['sector_targets'].get('Information Technology',0)
+                st.caption(f"Constraints active (e.g. Tech ≤ {tech_lim:.1%})")
         
     with col_univ:
         if "user_tickers" not in st.session_state: 
-            st.session_state["user_tickers"] = pd.DataFrame(STOCK_TICKERS)
+            st.session_state["user_tickers"] = pd.DataFrame(DEFAULT_TICKERS)
         
         # --- MERGE SECTOR LIMITS INTO TABLE (VISUAL ONLY) ---
         display_df = st.session_state["user_tickers"].copy()
@@ -269,7 +272,7 @@ def run_stock_optimizer():
             targets = st.session_state["sector_targets"]
             display_df["Macro Cap"] = display_df["Sector"].map(targets)
         
-        # Configure Columns: Make "Macro Cap" percentage formatted and Read-Only
+        # Configure Columns
         column_cfg = {
             "Ticker": st.column_config.TextColumn("Ticker", width="small"),
             "Sector": st.column_config.TextColumn("Sector", width="medium"),
@@ -295,9 +298,7 @@ def run_stock_optimizer():
                 df_mkt, hist = process_bulk_data(t_list, s_map, mode_sel)
                 
                 if df_mkt is not None and not df_mkt.empty:
-                    # PASS SECTOR LIMITS IF TOGGLED
                     limits = st.session_state["sector_targets"] if use_sector_limits else None
-                    
                     df_res = optimize_portfolio(df_mkt, obj, max_w, mode_sel, sector_limits=limits)
                     
                     st.session_state["opt_res"] = df_res
