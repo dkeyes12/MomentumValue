@@ -17,7 +17,6 @@ except ImportError:
 
 # --- CONFIGURATION ---
 def main():
-    # Only runs when called directly
     st.set_page_config(page_title="Portfolio Optimizer [MomentumValue + Backtest]", layout="wide")
     try:
         run_app()
@@ -69,6 +68,26 @@ def calculate_rsi(series, window=14):
     loss = (-delta.where(delta < 0, 0)).rolling(window=window).mean()
     rs = gain / loss
     return 100 - (100 / (1 + rs))
+
+def generate_pinescript(df_results):
+    """Generates TradingView Pine Script to display allocation table."""
+    script = [
+        "//@version=5",
+        "indicator('MomentumValue Portfolio Allocation', overlay=true)",
+        "var table tbl = table.new(position.top_right, 2, " + str(len(df_results) + 2) + ", border_width=1)",
+        "if barstate.islast",
+        "    table.cell(tbl, 0, 0, 'Asset', bgcolor=color.new(color.blue, 30), text_color=color.white)",
+        "    table.cell(tbl, 1, 0, 'Weight', bgcolor=color.new(color.blue, 30), text_color=color.white)"
+    ]
+    
+    for i, row in df_results.iterrows():
+        ticker = row['Ticker']
+        weight = f"{row['Weight']*100:.1f}%"
+        row_idx = i + 1
+        script.append(f"    table.cell(tbl, 0, {row_idx}, '{ticker}', bgcolor=color.new(color.gray, 90), text_color=color.black)")
+        script.append(f"    table.cell(tbl, 1, {row_idx}, '{weight}', bgcolor=color.new(color.gray, 90), text_color=color.black)")
+        
+    return "\n".join(script)
 
 @st.cache_data
 def process_bulk_data(tickers, sector_map, mode, period="5y"):
@@ -269,7 +288,6 @@ def run_app():
                     st.error("Need 2+ tickers.")
                 else:
                     with st.spinner(f"Fetching {period_select} data..."):
-                        # FIX: Using sector_map correctly here
                         df_mkt, hist_data = process_bulk_data(tickers, sector_map, mode_select, period=period_select)
                         if df_mkt is not None and not df_mkt.empty:
                             df_res = optimize_portfolio(df_mkt, obj_choice, max_concentration, mode_select)
@@ -279,12 +297,10 @@ def run_app():
                         else:
                             st.error("Fetch failed.")
 
-        # --- KEY FIX: Check market_data independently from opt_results ---
         if st.session_state["market_data"] is not None:
             df_market = st.session_state["market_data"]
             metric_col = "PEG" if mode_select == "Popular and widely followed stocks (P/E/G)" else "PE"
 
-            # --- Only show Optimization visualizations if result exists ---
             if st.session_state["opt_results"] is not None and not st.session_state["opt_results"].empty:
                 df_opt = st.session_state["opt_results"]
 
@@ -305,13 +321,11 @@ def run_app():
                 fig_quad.add_trace(go.Scatter(x=rem[metric_col].clip(upper=MAX_X), y=rem['RSI'], mode='markers+text', text=rem['Ticker'], name='Universe', marker=dict(color='gray', size=10)))
                 fig_quad.add_trace(go.Scatter(x=df_opt[metric_col].clip(upper=MAX_X), y=df_opt['RSI'], mode='markers+text', text=df_opt['Ticker'], name='Selected', marker=dict(color='blue', size=15)))
                 
-                # Draw Quadrants
                 fig_quad.add_shape(type="rect", x0=0, y0=50, x1=VAL_THRESHOLD, y1=100, fillcolor="green", opacity=0.1, layer="below", line_width=0)
                 fig_quad.add_shape(type="rect", x0=VAL_THRESHOLD, y0=50, x1=MAX_X, y1=100, fillcolor="yellow", opacity=0.1, layer="below", line_width=0)
                 fig_quad.add_shape(type="rect", x0=0, y0=0, x1=VAL_THRESHOLD, y1=50, fillcolor="yellow", opacity=0.1, layer="below", line_width=0)
                 fig_quad.add_shape(type="rect", x0=VAL_THRESHOLD, y0=0, x1=MAX_X, y1=50, fillcolor="red", opacity=0.1, layer="below", line_width=0)
                 
-                # --- ADD LABELS (Restored) ---
                 fig_quad.add_annotation(x=VAL_THRESHOLD/2, y=90, text="VALUE + MOMENTUM", showarrow=False, font=dict(color="green", size=14, weight="bold"))
                 fig_quad.add_annotation(x=VAL_THRESHOLD + (MAX_X-VAL_THRESHOLD)/2, y=90, text="EXPENSIVE MOMENTUM", showarrow=False, font=dict(color="orange", size=10))
                 fig_quad.add_annotation(x=VAL_THRESHOLD/2, y=10, text="WEAK / VALUE TRAP", showarrow=False, font=dict(color="orange", size=10))
@@ -320,7 +334,7 @@ def run_app():
                 fig_quad.update_layout(title="Asset Selection Matrix", xaxis_title=x_label, yaxis_title="RSI (Momentum)", height=500)
                 st.plotly_chart(fig_quad, use_container_width=True)
 
-                # 3. Optimal Allocation (With Methodology Expander)
+                # 3. Optimal Allocation
                 st.divider()
                 st.subheader("3. Optimal Allocation")
                 
@@ -337,7 +351,23 @@ def run_app():
                     **Why Harmonic Mean?** Averaging valuation ratios (like P/E) directly using an arithmetic mean creates a mathematical bias that overstates the "expensiveness" of the portfolio. The Harmonic Mean correctly averages the underlying "Earnings Yields" (E/P), providing a true reflection of the portfolio's aggregate valuation.
                     """)
 
-                st.dataframe(df_opt, use_container_width=True)
+                col_table, col_export = st.columns([2, 1])
+                
+                with col_table:
+                    st.dataframe(df_opt, use_container_width=True)
+                
+                # --- EXPORT TO TRADINGVIEW SECTION ---
+                with col_export:
+                    with st.expander("📤 Export to TradingView"):
+                        st.markdown("**1. Pine Script (Charts):** Copy and paste into Pine Editor.")
+                        pine_code = generate_pinescript(df_opt)
+                        st.code(pine_code, language="pinescript")
+                        
+                        st.divider()
+                        st.markdown("**2. JSON (Bots):** For webhook alerts.")
+                        # Create simple JSON dict
+                        json_data = df_opt[["Ticker", "Weight"]].to_json(orient="records")
+                        st.code(json_data, language="json")
 
                 # 4. Technical Analysis
                 st.subheader("4. Technical Analysis")
@@ -354,10 +384,8 @@ def run_app():
                     fig.update_layout(height=500, xaxis_rangeslider_visible=False)
                     st.plotly_chart(fig, use_container_width=True)
 
-            # --- Section 5: Market Data (Always Visible if Market Data Exists) ---
             st.divider()
             st.subheader("5. Market Data Analysis")
-            # df_market is definitely defined here because of the outer check
             st.dataframe(
                 df_market[["Ticker", "Sector", metric_col, "RSI", "Return", "Volatility"]].style.format({
                     metric_col: "{:.2f}", "RSI": "{:.2f}", "Return": "{:.2%}", "Volatility": "{:.2%}"
@@ -396,36 +424,21 @@ def run_app():
             hist_data = st.session_state["historical_data"]
             price_dict = {t: data['Close'] for t, data in hist_data.items()}
             price_df = pd.DataFrame(price_dict).dropna()
-            
-            # Returns Matrix (Full Universe for Benchmark)
             X = prices_to_returns(price_df)
             
-            # --- FIX: ISOLATE SELECTED ASSETS FOR STRATEGY PORTFOLIO ---
+            # --- ISOLATE SELECTED ASSETS FOR STRATEGY ---
             selected_tickers = df_opt['Ticker'].tolist()
             selected_weights = df_opt['Weight'].tolist()
-            
-            # Filter X to only include selected assets for the strategy portfolio
-            # This ensures charts only show relevant assets
             X_strategy = X[selected_tickers]
             
-            # 1. Strategy Portfolio (Subset Data)
-            strategy_portfolio = Portfolio(
-                X=X_strategy, 
-                weights=selected_weights, 
-                name="Optimized Strategy"
-            )
+            strategy_portfolio = Portfolio(X=X_strategy, weights=selected_weights, name="Optimized Strategy")
             
-            # 2. Benchmark Portfolio (Full Universe Data)
+            # Benchmark uses FULL universe
             n_assets = len(X.columns)
-            benchmark_portfolio = Portfolio(
-                X=X, 
-                weights=[1.0/n_assets]*n_assets, 
-                name="Equal Weighted Benchmark (Full Universe)"
-            )
+            benchmark_portfolio = Portfolio(X=X, weights=[1.0/n_assets]*n_assets, name="Equal Weighted Benchmark")
             
-            # 3. Analyze Population
             pop = Population([strategy_portfolio, benchmark_portfolio])
-            st.markdown("Comparing your optimized portfolio against an equal-weighted benchmark of the full universe.")
+            st.markdown("Comparing your optimized portfolio against an equal-weighted benchmark.")
             
             st.subheader("Cumulative Returns")
             try:
@@ -437,7 +450,6 @@ def run_app():
             st.subheader("Risk & Return Metrics")
             try:
                 summary_df = pop.summary()
-                # Use .astype(str) to avoid formatting crashes with mixed types
                 st.dataframe(summary_df.astype(str), use_container_width=True)
             except Exception as e:
                 st.error(f"Could not generate summary: {e}")
