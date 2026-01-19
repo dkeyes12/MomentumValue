@@ -27,19 +27,18 @@ BENCHMARK_SECTOR_DATA = {
 }
 
 # --- UPDATED: S&P 500 SECTOR UNIVERSE ---
-# Note: Sector names aligned to match BENCHMARK_SECTOR_DATA keys for automatic mapping
 DEFAULT_TICKERS = [
-    {"Ticker": "XLK", "Sector": "Information Technology"}, # Was Technology
+    {"Ticker": "XLK", "Sector": "Information Technology"},
     {"Ticker": "XLV", "Sector": "Health Care"},
     {"Ticker": "XLF", "Sector": "Financials"},
     {"Ticker": "XLRE", "Sector": "Real Estate"},
     {"Ticker": "XLE", "Sector": "Energy"},
     {"Ticker": "XLB", "Sector": "Materials"},
-    {"Ticker": "XLY", "Sector": "Consumer Discretionary"}, # Was Cons. Discretionary
-    {"Ticker": "XLP", "Sector": "Consumer Staples"},       # Was Cons. Staples
+    {"Ticker": "XLY", "Sector": "Consumer Discretionary"},
+    {"Ticker": "XLP", "Sector": "Consumer Staples"},
     {"Ticker": "XLI", "Sector": "Industrials"},
     {"Ticker": "XLU", "Sector": "Utilities"},
-    {"Ticker": "XLC", "Sector": "Communication Services"}  # Was Communication
+    {"Ticker": "XLC", "Sector": "Communication Services"}
 ]
 
 # --- SHARED HELPER FUNCTIONS ---
@@ -65,17 +64,28 @@ def plot_quadrant_chart(df, metric_col, rsi_col, weight_col=None, title="Asset S
         x_label = "PEG Ratio (Lower is Better)"
     
     fig = go.Figure()
-    sizes = df[weight_col] * 200 if weight_col and weight_col in df.columns else 15
+    
+    if weight_col and weight_col in df.columns:
+        df['Is_Selected'] = df[weight_col] > 0.0001
+        df['Bubble_Size'] = df.apply(lambda r: r[weight_col] * 300 if r['Is_Selected'] else 10, axis=1)
+    else:
+        df['Is_Selected'] = True
+        df['Bubble_Size'] = 15
 
     fig.add_trace(go.Scatter(
         x=df[metric_col].clip(upper=MAX_X), y=df[rsi_col],
         mode='markers+text', text=df['Ticker'], textposition="top center",
-        marker=dict(size=sizes, color=df[rsi_col], colorscale='RdYlGn', showscale=True, colorbar=dict(title="RSI Strength")),
-        hovertemplate="<b>%{text}</b><br>RSI: %{y:.1f}<br>Valuation: %{x:.2f}<extra></extra>"
+        marker=dict(
+            size=df['Bubble_Size'],
+            color=df[rsi_col], colorscale='RdYlGn_r', showscale=True, 
+            colorbar=dict(title="RSI (Red=High)"), line=dict(width=1, color='DarkSlateGrey')
+        ),
+        hovertemplate="<b>%{text}</b><br>RSI: %{y:.1f}<br>Valuation: %{x:.2f}<br>Selected: %{customdata[0]}<extra></extra>",
+        customdata=df[['Is_Selected']]
     ))
 
     fig.add_shape(type="rect", x0=0, y0=50, x1=VAL_THRESHOLD, y1=100, fillcolor="green", opacity=0.1, layer="below", line_width=0)
-    fig.add_shape(type="rect", x0=VAL_THRESHOLD, y0=50, x1=MAX_X, y1=100, fillcolor="yellow", opacity=0.1, layer="below", line_width=0)
+    fig.add_shape(type="rect", x0=VAL_THRESHOLD, y0=50, x1=MAX_X, y1=100, fillcolor="orange", opacity=0.1, layer="below", line_width=0)
     fig.add_shape(type="rect", x0=0, y0=0, x1=VAL_THRESHOLD, y1=50, fillcolor="yellow", opacity=0.1, layer="below", line_width=0)
     fig.add_shape(type="rect", x0=VAL_THRESHOLD, y0=0, x1=MAX_X, y1=50, fillcolor="red", opacity=0.1, layer="below", line_width=0)
     
@@ -84,7 +94,7 @@ def plot_quadrant_chart(df, metric_col, rsi_col, weight_col=None, title="Asset S
     fig.add_annotation(x=VAL_THRESHOLD/2, y=5, text="WEAK / VALUE TRAP", showarrow=False, font=dict(color="orange", size=10))
     fig.add_annotation(x=VAL_THRESHOLD + (MAX_X-VAL_THRESHOLD)/2, y=5, text="EXPENSIVE & WEAK", showarrow=False, font=dict(color="red", weight="bold"))
 
-    fig.update_layout(title=title, xaxis_title=x_label, yaxis_title="Momentum (RSI)", height=550)
+    fig.update_layout(title=title, xaxis_title=x_label, yaxis_title="Momentum (RSI)", height=600)
     return fig
 
 @st.cache_data
@@ -138,14 +148,11 @@ def optimize_portfolio(df, objective_type, max_weight_per_asset, mode, sector_li
     solver = pywraplp.Solver.CreateSolver('GLOP')
     if not solver: return None
 
-    # Define Variables
     weights = [solver.NumVar(0.0, max_weight_per_asset, f'w_{i}') for i in range(len(df))]
     
-    # Constraint 1: Sum of weights = 100%
     constraint_sum = solver.Constraint(1.0, 1.0)
     for w in weights: constraint_sum.SetCoefficient(w, 1)
 
-    # Constraint 2: Sector Limits (From Mode 1)
     if sector_limits:
         sector_groups = {}
         for i, row in df.iterrows():
@@ -160,7 +167,6 @@ def optimize_portfolio(df, objective_type, max_weight_per_asset, mode, sector_li
                 for idx in indices:
                     c_sec.SetCoefficient(weights[idx], 1)
 
-    # Objective Function
     metric_col = "PEG" if "P/E/G" in mode else "PE"
     if metric_col == "PEG": scores = (df['RSI'] / 100) + (1 / df['PEG']) 
     else: scores = (df['RSI'] / 100) + ((1 / df['PE']) * 50)
@@ -180,17 +186,17 @@ def optimize_portfolio(df, objective_type, max_weight_per_asset, mode, sector_li
     if status == pywraplp.Solver.OPTIMAL:
         results = []
         for i, w in enumerate(weights):
-            if w.solution_value() > 0.001:
-                row = df.iloc[i].to_dict()
-                row["Weight"] = w.solution_value()
-                results.append(row)
+            val = w.solution_value()
+            row = df.iloc[i].to_dict()
+            row["Weight"] = val
+            results.append(row)
         return pd.DataFrame(results)
     return pd.DataFrame()
 
-# --- MODE 1: SECTOR REBALANCER LOGIC ---
+# --- STEP 1: REBALANCE TECHNOLOGY ---
 def run_sector_rebalancer():
-    st.header("Mode 1: Top-Down S&P 500 Rebalancer")
-    st.markdown("Adjust broad market sector weights. **These targets will be saved for Mode 2.**")
+    st.header("Step 1: Rebalance Technology")
+    st.markdown("Adjust broad market sector weights. **These targets will be saved for Step 2.**")
     
     current_tech_pct = BENCHMARK_SECTOR_DATA["Information Technology"] * 100
     
@@ -208,9 +214,8 @@ def run_sector_rebalancer():
         if sec == "Information Technology": new_alloc[sec] = target_tech
         else: new_alloc[sec] = w * scale
     
-    # --- SAVE TO SESSION STATE FOR MODE 2 ---
     st.session_state["sector_targets"] = new_alloc
-    st.success(f"✅ Sector targets saved! Tech constrained to {tech_cap}%. Go to 'Portfolio Optimizer' to apply them.")
+    st.success(f"✅ Sector targets saved! Tech constrained to {tech_cap}%. Go to 'Step 2' to apply them.")
 
     df_alloc = pd.DataFrame([{"Sector": k, "Benchmark": v, "Custom": new_alloc[k]} for k, v in BENCHMARK_SECTOR_DATA.items()])
     df_alloc["Delta"] = df_alloc["Custom"] - df_alloc["Benchmark"]
@@ -221,7 +226,6 @@ def run_sector_rebalancer():
         active_share = np.sum(np.abs(df_alloc["Custom"] - df_alloc["Benchmark"])) / 2
         m2.metric("Active Share", f"{active_share:.1%}")
 
-    # Charts
     tab1, tab2 = st.tabs(["📊 Sector Weights", "📝 Data"])
     with tab1:
         fig = go.Figure()
@@ -239,48 +243,45 @@ def run_sector_rebalancer():
             use_container_width=True
         )
 
-# --- MODE 2: STOCK OPTIMIZER LOGIC ---
+# --- STEP 2: OPTIMIZE ---
 def run_stock_optimizer():
-    st.header("Mode 2: Bottom-Up Stock Optimizer")
+    st.header("Step 2: Optimize")
     
-    # Inputs
     col_conf, col_univ = st.columns([1, 2])
     with col_conf:
         mode_sel = st.radio("Metrics:", ["Standard (P/E)", "Popular (P/E/G)"])
         obj = st.radio("Objective:", ["Maximize Gain", "Minimize Volatility"])
-        max_w = st.slider("Max Weight (Individual)", 0.05, 1.0, 0.25, 0.05)
         
-        # --- SECTOR CONSTRAINT TOGGLE ---
+        # --- REORDERED: Macro Link above Max Weight ---
         use_sector_limits = False
         if "sector_targets" in st.session_state:
             st.divider()
             st.markdown("🔗 **Macro Link Active**")
-            use_sector_limits = st.checkbox("Apply Sector Limits from Mode 1?", value=True)
+            use_sector_limits = st.checkbox("Apply Sector Limits from Step 1?", value=True)
             if use_sector_limits:
                 tech_lim = st.session_state['sector_targets'].get('Information Technology',0)
                 st.caption(f"Constraints active (e.g. Tech ≤ {tech_lim:.1%})")
+            st.divider()
+
+        max_w = st.slider("Max Weight (Individual)", 0.05, 1.0, 0.25, 0.05)
         
     with col_univ:
         if "user_tickers" not in st.session_state: 
             st.session_state["user_tickers"] = pd.DataFrame(DEFAULT_TICKERS)
         
-        # --- MERGE SECTOR LIMITS INTO TABLE (VISUAL ONLY) ---
         display_df = st.session_state["user_tickers"].copy()
         
         if use_sector_limits and "sector_targets" in st.session_state:
-            # Map the sector limit to each ticker row
             targets = st.session_state["sector_targets"]
             display_df["Macro Cap"] = display_df["Sector"].map(targets)
         
-        # Configure Columns
         column_cfg = {
             "Ticker": st.column_config.TextColumn("Ticker", width="small"),
             "Sector": st.column_config.TextColumn("Sector", width="medium"),
             "Macro Cap": st.column_config.NumberColumn(
                 "Macro Cap", 
-                format="%.1f%%", 
-                disabled=True, # Read-only
-                help="Maximum allocation allowed for this entire sector (from Mode 1)."
+                format="%.2f%%", 
+                disabled=True
             )
         }
         
@@ -307,7 +308,6 @@ def run_stock_optimizer():
                 else:
                     st.error("Data fetch failed or returned empty universe.")
 
-    # Results
     if "opt_res" in st.session_state and st.session_state["opt_res"] is not None and not st.session_state["opt_res"].empty:
         df_res = st.session_state["opt_res"]
         df_mkt = st.session_state["mkt_data"]
@@ -322,7 +322,8 @@ def run_stock_optimizer():
         st.subheader("2. Optimal Allocation")
         col_tbl, col_tv = st.columns([2, 1])
         with col_tbl:
-            disp = df_res.sort_values("Weight", ascending=False).copy()
+            disp = df_res[df_res["Weight"] > 0.001].sort_values("Weight", ascending=False).copy()
+            
             tot_w = disp["Weight"].sum()
             w_rsi = (disp["Weight"]*disp["RSI"]).sum()/tot_w if tot_w > 0 else 0
             w_vol = (disp["Weight"]*disp["Volatility"]).sum()/tot_w if tot_w > 0 else 0
@@ -334,9 +335,9 @@ def run_stock_optimizer():
             
             st.dataframe(
                 final.style.format({
-                    "Weight": "{:.1%}", 
+                    "Weight": "{:.2%}", 
                     "RSI": "{:.1f}", 
-                    "Volatility": "{:.1%}", 
+                    "Volatility": "{:.2%}", 
                     metric_col: "{:.2f}"
                 }), 
                 use_container_width=True
@@ -345,10 +346,10 @@ def run_stock_optimizer():
         with col_tv:
             with st.expander("📤 TradingView Export"):
                 st.write("Copy/Paste to Pine Editor:")
-                lines = ["//@version=5", "indicator('Portfolio', overlay=true)", f"var table t = table.new(position.top_right, 2, {len(df_res)+1})"]
+                lines = ["//@version=5", "indicator('Portfolio', overlay=true)", f"var table t = table.new(position.top_right, 2, {len(disp)+1})"]
                 for idx, (i, r) in enumerate(disp.iterrows()):
                     lines.append(f"table.cell(t, 0, {idx}, '{r['Ticker']}')")
-                    lines.append(f"table.cell(t, 1, {idx}, '{r['Weight']*100:.1f}%')")
+                    lines.append(f"table.cell(t, 1, {idx}, '{r['Weight']*100:.2f}%')")
                 st.code("\n".join(lines))
 
         st.divider()
@@ -357,8 +358,9 @@ def run_stock_optimizer():
             try:
                 p_df = pd.DataFrame({t: d['Close'] for t, d in hist.items()}).dropna()
                 X = prices_to_returns(p_df)
-                sel_ticks = df_res["Ticker"].tolist()
-                sel_ws = df_res["Weight"].tolist()
+                
+                sel_ticks = disp["Ticker"].tolist()
+                sel_ws = disp["Weight"].tolist()
                 X_strat = X[sel_ticks]
                 
                 strat = Portfolio(X=X_strat, weights=sel_ws, name="Optimized")
@@ -374,10 +376,10 @@ def run_stock_optimizer():
 # --- MAIN CONTROLLER ---
 def run_app():
     st.sidebar.title("MomentumValue")
-    app_mode = st.sidebar.radio("Select Mode:", ["Sector Rebalancer (Macro)", "Portfolio Optimizer (Micro)"])
+    app_mode = st.sidebar.radio("Select Step:", ["Step 1: Rebalance Technology", "Step 2: Optimize"])
     st.sidebar.divider()
     
-    if app_mode == "Sector Rebalancer (Macro)":
+    if app_mode == "Step 1: Rebalance Technology":
         run_sector_rebalancer()
     else:
         run_stock_optimizer()
