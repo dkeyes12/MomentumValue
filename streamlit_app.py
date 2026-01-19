@@ -26,7 +26,6 @@ BENCHMARK_SECTOR_DATA = {
     "Real Estate": 0.023, "Materials": 0.022
 }
 
-# Updated to match BENCHMARK keys exactly
 STOCK_TICKERS = [
     {"Ticker": "NVDA", "Sector": "Information Technology"}, 
     {"Ticker": "AAPL", "Sector": "Information Technology"},
@@ -134,9 +133,6 @@ def process_bulk_data(tickers, sector_map, mode, period="5y"):
     return pd.DataFrame(snapshot_data), hist_data
 
 def optimize_portfolio(df, objective_type, max_weight_per_asset, mode, sector_limits=None):
-    """
-    Optimizes portfolio with optional Sector Constraints fed from Mode 1.
-    """
     if df is None or df.empty: return pd.DataFrame()
     solver = pywraplp.Solver.CreateSolver('GLOP')
     if not solver: return None
@@ -150,19 +146,15 @@ def optimize_portfolio(df, objective_type, max_weight_per_asset, mode, sector_li
 
     # Constraint 2: Sector Limits (From Mode 1)
     if sector_limits:
-        # Group indices by sector
         sector_groups = {}
         for i, row in df.iterrows():
             sec = row['Sector']
             if sec not in sector_groups: sector_groups[sec] = []
             sector_groups[sec].append(i)
         
-        # Apply constraint for each sector present in the dataframe
         for sec, indices in sector_groups.items():
             if sec in sector_limits:
                 limit = sector_limits[sec]
-                # Constraint: Sum(weights of sector) <= Limit
-                # We use <= to allow cash or flexibility, though typically it matches exactly if optimization is efficient
                 c_sec = solver.Constraint(0.0, limit)
                 for idx in indices:
                     c_sec.SetCoefficient(weights[idx], 1)
@@ -237,7 +229,14 @@ def run_sector_rebalancer():
         fig.update_layout(barmode='group', height=400, yaxis_tickformat='.0%')
         st.plotly_chart(fig, use_container_width=True)
     with tab2:
-        st.dataframe(df_alloc.style.format({"Benchmark": "{:.1%}", "Custom": "{:.1%}", "Delta": "{:+.1%}"}), use_container_width=True)
+        st.dataframe(
+            df_alloc.style.format({
+                "Benchmark": "{:.1%}", 
+                "Custom": "{:.1%}", 
+                "Delta": "{:+.1%}"
+            }), 
+            use_container_width=True
+        )
 
 # --- MODE 2: STOCK OPTIMIZER LOGIC ---
 def run_stock_optimizer():
@@ -246,19 +245,29 @@ def run_stock_optimizer():
     # Inputs
     col_conf, col_univ = st.columns([1, 2])
     with col_conf:
-        mode_sel = st.radio("Metrics:", ["Popular (P/E/G)", "Standard (P/E)"])
+        # FIX: Swapped order so "Standard (P/E)" is the default (index 0)
+        mode_sel = st.radio("Metrics:", ["Standard (P/E)", "Popular (P/E/G)"])
         obj = st.radio("Objective:", ["Maximize Gain", "Minimize Volatility"])
         max_w = st.slider("Max Weight (Individual)", 0.05, 1.0, 0.25, 0.05)
         
-        # --- SECTOR CONSTRAINT TOGGLE ---
+        # --- SECTOR CONSTRAINT DISPLAY ---
         use_sector_limits = False
         if "sector_targets" in st.session_state:
             st.divider()
             st.markdown("🔗 **Macro Link Active**")
             use_sector_limits = st.checkbox("Apply Sector Limits from Mode 1?", value=True)
+            
             if use_sector_limits:
-                tech_limit = st.session_state['sector_targets'].get('Information Technology', 0)
-                st.caption(f"Constraints active: Tech ≤ {tech_limit:.1%}, etc.")
+                st.caption("Sector Constraints applied to Solver:")
+                # Create a small dataframe for display
+                targets = st.session_state["sector_targets"]
+                df_targets = pd.DataFrame(list(targets.items()), columns=["Sector", "Max Weight"])
+                # Format as percentage
+                st.dataframe(
+                    df_targets.style.format({"Max Weight": "{:.1%}"}),
+                    use_container_width=True,
+                    height=250 # Constrain height so it doesn't take up whole sidebar
+                )
         
     with col_univ:
         if "user_tickers" not in st.session_state: 
@@ -308,7 +317,15 @@ def run_stock_optimizer():
             sum_row = pd.DataFrame([{"Ticker": "TOTAL", "Weight": tot_w, "RSI": w_rsi, "Volatility": w_vol, metric_col: w_val}])
             final = pd.concat([disp, sum_row], ignore_index=True)
             
-            st.dataframe(final.style.format({"Weight": "{:.1%}", "RSI": "{:.1f}", "Volatility": "{:.1%}", metric_col: "{:.2f}"}), use_container_width=True)
+            st.dataframe(
+                final.style.format({
+                    "Weight": "{:.1%}", 
+                    "RSI": "{:.1f}", 
+                    "Volatility": "{:.1%}", 
+                    metric_col: "{:.2f}"
+                }), 
+                use_container_width=True
+            )
             
         with col_tv:
             with st.expander("📤 TradingView Export"):
