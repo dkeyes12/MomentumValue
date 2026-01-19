@@ -51,8 +51,14 @@ def calculate_rsi(series, window=14):
     return 100 - (100 / (1 + rs))
 
 def plot_quadrant_chart(df, metric_col, rsi_col, weight_col=None, title="Asset Selection Matrix"):
+    """
+    Plots the 2x2 Matrix.
+    - Selected Assets: Sized by weight, Colored by RSI.
+    - Unselected Assets: Small, Greyed out.
+    """
     if df.empty: return go.Figure()
 
+    # Dynamic X-Axis Thresholds
     data_median = df[metric_col].median()
     if pd.isna(data_median) or data_median > 5.0: # Likely P/E
         max_val = df[metric_col].max()
@@ -64,37 +70,76 @@ def plot_quadrant_chart(df, metric_col, rsi_col, weight_col=None, title="Asset S
         x_label = "PEG Ratio (Lower is Better)"
     
     fig = go.Figure()
-    
+
+    # --- SPLIT DATA: SELECTED vs UNSELECTED ---
     if weight_col and weight_col in df.columns:
-        df['Is_Selected'] = df[weight_col] > 0.0001
-        df['Bubble_Size'] = df.apply(lambda r: r[weight_col] * 300 if r['Is_Selected'] else 10, axis=1)
+        # Threshold to determine selection (avoid floating point zero issues)
+        df_selected = df[df[weight_col] > 0.0001].copy()
+        df_unselected = df[df[weight_col] <= 0.0001].copy()
+        
+        # Calculate bubble size for selected only
+        df_selected['Bubble_Size'] = df_selected[weight_col] * 300 
     else:
-        df['Is_Selected'] = True
-        df['Bubble_Size'] = 15
+        # Fallback if no weights exist (show all as selected generic)
+        df_selected = df.copy()
+        df_unselected = pd.DataFrame()
+        df_selected['Bubble_Size'] = 15
 
-    fig.add_trace(go.Scatter(
-        x=df[metric_col].clip(upper=MAX_X), y=df[rsi_col],
-        mode='markers+text', text=df['Ticker'], textposition="top center",
-        marker=dict(
-            size=df['Bubble_Size'],
-            color=df[rsi_col], colorscale='RdYlGn_r', showscale=True, 
-            colorbar=dict(title="RSI (Red=High)"), line=dict(width=1, color='DarkSlateGrey')
-        ),
-        hovertemplate="<b>%{text}</b><br>RSI: %{y:.1f}<br>Valuation: %{x:.2f}<br>Selected: %{customdata[0]}<extra></extra>",
-        customdata=df[['Is_Selected']]
-    ))
+    # --- TRACE 1: UNSELECTED (GREY GHOSTS) ---
+    if not df_unselected.empty:
+        fig.add_trace(go.Scatter(
+            x=df_unselected[metric_col].clip(upper=MAX_X), 
+            y=df_unselected[rsi_col],
+            mode='markers+text', 
+            text=df_unselected['Ticker'], 
+            textposition="top center",
+            marker=dict(
+                size=8,              # Small fixed size
+                color='#E0E0E0',     # Light Grey
+                line=dict(width=1, color='#A0A0A0') # Darker grey border
+            ),
+            hovertemplate="<b>%{text}</b><br>RSI: %{y:.1f}<br>Valuation: %{x:.2f}<br>Status: Not Selected<extra></extra>",
+            name="Unselected"
+        ))
 
+    # --- TRACE 2: SELECTED (COLORED GRADIENT) ---
+    if not df_selected.empty:
+        fig.add_trace(go.Scatter(
+            x=df_selected[metric_col].clip(upper=MAX_X), 
+            y=df_selected[rsi_col],
+            mode='markers+text', 
+            text=df_selected['Ticker'], 
+            textposition="top center",
+            marker=dict(
+                size=df_selected['Bubble_Size'],
+                color=df_selected[rsi_col], 
+                # Reverse Gradient: Green(Min) -> Red(Max)
+                colorscale='RdYlGn_r', 
+                showscale=True, 
+                colorbar=dict(title="RSI (Red=High)"), 
+                line=dict(width=1, color='DarkSlateGrey')
+            ),
+            hovertemplate="<b>%{text}</b><br>RSI: %{y:.1f}<br>Valuation: %{x:.2f}<br>Weight: %{marker.size:.2f}%<extra></extra>",
+            name="Selected"
+        ))
+
+    # --- QUADRANT BACKGROUNDS ---
+    # 1. Best: Low Val / High RSI -> Green
     fig.add_shape(type="rect", x0=0, y0=50, x1=VAL_THRESHOLD, y1=100, fillcolor="green", opacity=0.1, layer="below", line_width=0)
+    # 2. Expensive: High Val / High RSI -> Orange
     fig.add_shape(type="rect", x0=VAL_THRESHOLD, y0=50, x1=MAX_X, y1=100, fillcolor="orange", opacity=0.1, layer="below", line_width=0)
+    # 3. Value Trap: Low Val / Low RSI -> Yellow
     fig.add_shape(type="rect", x0=0, y0=0, x1=VAL_THRESHOLD, y1=50, fillcolor="yellow", opacity=0.1, layer="below", line_width=0)
+    # 4. Weak: High Val / Low RSI -> Red
     fig.add_shape(type="rect", x0=VAL_THRESHOLD, y0=0, x1=MAX_X, y1=50, fillcolor="red", opacity=0.1, layer="below", line_width=0)
     
+    # --- LABELS ---
     fig.add_annotation(x=VAL_THRESHOLD/2, y=95, text="VALUE + MOMENTUM", showarrow=False, font=dict(color="green", weight="bold"))
     fig.add_annotation(x=VAL_THRESHOLD + (MAX_X-VAL_THRESHOLD)/2, y=95, text="EXPENSIVE MOMENTUM", showarrow=False, font=dict(color="orange", size=10))
     fig.add_annotation(x=VAL_THRESHOLD/2, y=5, text="WEAK / VALUE TRAP", showarrow=False, font=dict(color="orange", size=10))
     fig.add_annotation(x=VAL_THRESHOLD + (MAX_X-VAL_THRESHOLD)/2, y=5, text="EXPENSIVE & WEAK", showarrow=False, font=dict(color="red", weight="bold"))
 
-    fig.update_layout(title=title, xaxis_title=x_label, yaxis_title="Momentum (RSI)", height=600)
+    fig.update_layout(title=title, xaxis_title=x_label, yaxis_title="Momentum (RSI)", height=600, showlegend=False)
     return fig
 
 @st.cache_data
@@ -252,7 +297,6 @@ def run_stock_optimizer():
         mode_sel = st.radio("Metrics:", ["Standard (P/E)", "Popular (P/E/G)"])
         obj = st.radio("Objective:", ["Maximize Gain", "Minimize Volatility"])
         
-        # --- REORDERED: Macro Link above Max Weight ---
         use_sector_limits = False
         if "sector_targets" in st.session_state:
             st.divider()
@@ -316,12 +360,14 @@ def run_stock_optimizer():
 
         st.divider()
         st.subheader("1. Asset Selection Matrix")
+        # Now passing dataframe containing ALL assets (0 weight included)
         fig_quad = plot_quadrant_chart(df_res, metric_col, "RSI", weight_col="Weight")
         st.plotly_chart(fig_quad, use_container_width=True)
 
         st.subheader("2. Optimal Allocation")
         col_tbl, col_tv = st.columns([2, 1])
         with col_tbl:
+            # Filter for table to only show selected
             disp = df_res[df_res["Weight"] > 0.001].sort_values("Weight", ascending=False).copy()
             
             tot_w = disp["Weight"].sum()
@@ -335,7 +381,7 @@ def run_stock_optimizer():
             
             st.dataframe(
                 final.style.format({
-                    "Weight": "{:.2%}", 
+                    "Weight": "{:.2%}", # 2 Decimals
                     "RSI": "{:.1f}", 
                     "Volatility": "{:.2%}", 
                     metric_col: "{:.2f}"
