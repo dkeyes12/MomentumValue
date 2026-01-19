@@ -7,7 +7,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import time
 
-# --- OPTIONAL SKFOLIO IMPORTS ---
+# --- SKFOLIO IMPORTS ---
 try:
     from skfolio import Portfolio, Population
     from skfolio.preprocessing import prices_to_returns
@@ -48,10 +48,13 @@ def plot_quadrant_chart(df, metric_col, rsi_col, weight_col=None, title="Asset S
     """
     Shared function to plot the 2x2 Value vs Momentum matrix.
     """
+    if df.empty:
+        return go.Figure()
+
     # Dynamic Thresholds
     data_median = df[metric_col].median()
-    if data_median > 5.0: # Likely P/E
-        VAL_THRESHOLD = 25; MAX_X = max(60, df[metric_col].max() * 1.1)
+    if pd.isna(data_median) or data_median > 5.0: # Likely P/E
+        VAL_THRESHOLD = 25; MAX_X = max(60, df[metric_col].max() if not pd.isna(df[metric_col].max()) else 60)
         x_label = "P/E Ratio (Lower is Better)"
     else: # Likely PEG
         VAL_THRESHOLD = 1.5; MAX_X = 4.0
@@ -262,10 +265,10 @@ def run_stock_optimizer():
                     st.session_state["mkt_data"] = df_mkt
                     st.session_state["hist_data"] = hist
                 else:
-                    st.error("Data fetch failed.")
+                    st.error("Data fetch failed or returned empty universe.")
 
     # Results
-    if "opt_res" in st.session_state and st.session_state["opt_res"] is not None:
+    if "opt_res" in st.session_state and st.session_state["opt_res"] is not None and not st.session_state["opt_res"].empty:
         df_res = st.session_state["opt_res"]
         df_mkt = st.session_state["mkt_data"]
         hist = st.session_state["hist_data"]
@@ -285,8 +288,8 @@ def run_stock_optimizer():
             disp = df_res.sort_values("Weight", ascending=False).copy()
             # Totals
             tot_w = disp["Weight"].sum()
-            w_rsi = (disp["Weight"]*disp["RSI"]).sum()/tot_w
-            w_vol = (disp["Weight"]*disp["Volatility"]).sum()/tot_w
+            w_rsi = (disp["Weight"]*disp["RSI"]).sum()/tot_w if tot_w > 0 else 0
+            w_vol = (disp["Weight"]*disp["Volatility"]).sum()/tot_w if tot_w > 0 else 0
             # Harmonic Mean for Valuation
             w_val_inv = (disp["Weight"]/disp[metric_col]).sum()
             w_val = tot_w/w_val_inv if w_val_inv > 0 else 0
@@ -300,9 +303,10 @@ def run_stock_optimizer():
             with st.expander("📤 TradingView Export"):
                 st.write("Copy/Paste to Pine Editor:")
                 lines = ["//@version=5", "indicator('Portfolio', overlay=true)", f"var table t = table.new(position.top_right, 2, {len(df_res)+1})"]
-                for i, r in df_res.iterrows():
-                    lines.append(f"table.cell(t, 0, {i}, '{r['Ticker']}')")
-                    lines.append(f"table.cell(t, 1, {i}, '{r['Weight']*100:.1f}%')")
+                # Use enumerate to guarantee sequential integers 0..N
+                for idx, (i, r) in enumerate(disp.iterrows()):
+                    lines.append(f"table.cell(t, 0, {idx}, '{r['Ticker']}')")
+                    lines.append(f"table.cell(t, 1, {idx}, '{r['Weight']*100:.1f}%')")
                 st.code("\n".join(lines))
 
         # 3. Backtest (skfolio)
@@ -331,10 +335,13 @@ def run_stock_optimizer():
             except Exception as e:
                 st.error(f"Backtest Error: {e}")
         else:
-            st.warning("skfolio not installed or data missing.")
+            if not SKFOLIO_AVAILABLE:
+                st.warning("`skfolio` not installed.")
+            else:
+                st.warning("Insufficient history for backtest.")
 
 # --- MAIN CONTROLLER ---
-def main():
+def run_app():
     st.sidebar.title("MomentumValue")
     app_mode = st.sidebar.radio("Select Mode:", ["Sector Rebalancer (Macro)", "Portfolio Optimizer (Micro)"])
     st.sidebar.divider()
@@ -345,4 +352,7 @@ def main():
         run_stock_optimizer()
 
 if __name__ == "__main__":
-    main()
+    try:
+        run_app()
+    except Exception as e:
+        st.error(f"Application Error: {e}")
