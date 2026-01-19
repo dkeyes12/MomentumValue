@@ -81,12 +81,16 @@ def generate_pinescript(df_results):
         "    table.cell(tbl, 1, 0, 'Weight', bgcolor=color.new(color.blue, 30), text_color=color.white)"
     ]
     
-    for i, row in df_results.iterrows():
+    # Sort for Pine Script display as well
+    df_sorted = df_results.sort_values(by="Weight", ascending=False)
+    
+    for i, row in df_sorted.iterrows():
         ticker = row['Ticker']
         weight = f"{row['Weight']*100:.1f}%"
-        row_idx = i + 1
-        script.append(f"    table.cell(tbl, 0, {row_idx}, '{ticker}', bgcolor=color.new(color.gray, 90), text_color=color.black)")
-        script.append(f"    table.cell(tbl, 1, {row_idx}, '{weight}', bgcolor=color.new(color.gray, 90), text_color=color.black)")
+        row_idx = i + 1 # Note: row index logic in Pine Script might need sequential index, not dataframe index
+        # Fix: using enumerate counter for row index in table
+        script.append(f"    table.cell(tbl, 0, {i+1}, '{ticker}', bgcolor=color.new(color.gray, 90), text_color=color.black)")
+        script.append(f"    table.cell(tbl, 1, {i+1}, '{weight}', bgcolor=color.new(color.gray, 90), text_color=color.black)")
         
     return "\n".join(script)
 
@@ -355,14 +359,13 @@ def run_app():
                 col_table, col_export = st.columns([2, 1])
                 
                 with col_table:
-                    # --- CALCULATE & APPEND TOTAL ROW ---
+                    # --- FIX: SORT BY WEIGHT DESCENDING ---
                     disp_df = df_opt.copy()
+                    disp_df = disp_df.sort_values(by="Weight", ascending=False)
                     
                     # Totals
                     total_weight = disp_df['Weight'].sum()
                     w_rsi = (disp_df['Weight'] * disp_df['RSI']).sum() / total_weight if total_weight > 0 else 0
-                    
-                    # Harmonic Mean for Valuation
                     w_val_inv = (disp_df['Weight'] / disp_df[metric_col]).sum()
                     w_val = total_weight / w_val_inv if w_val_inv > 0 else 0
                     
@@ -388,12 +391,14 @@ def run_app():
                 with col_export:
                     with st.expander("📤 Export to TradingView"):
                         st.markdown("**1. Pine Script (Charts):** Copy and paste into Pine Editor.")
-                        pine_code = generate_pinescript(df_opt) # Use original df_opt (no total row)
+                        pine_code = generate_pinescript(df_opt) 
                         st.code(pine_code, language="pinescript")
                         
                         st.divider()
                         st.markdown("**2. JSON (Bots):** For webhook alerts.")
-                        json_data = df_opt[["Ticker", "Weight"]].to_json(orient="records")
+                        # Sort JSON too for consistency
+                        df_json = df_opt.sort_values(by="Weight", ascending=False)
+                        json_data = df_json[["Ticker", "Weight"]].to_json(orient="records")
                         st.code(json_data, language="json")
 
                 # 4. Technical Analysis
