@@ -87,8 +87,7 @@ def generate_pinescript(df_results):
     for i, row in df_sorted.iterrows():
         ticker = row['Ticker']
         weight = f"{row['Weight']*100:.1f}%"
-        row_idx = i + 1 # Note: row index logic in Pine Script might need sequential index, not dataframe index
-        # Fix: using enumerate counter for row index in table
+        # row_idx logic for table positioning
         script.append(f"    table.cell(tbl, 0, {i+1}, '{ticker}', bgcolor=color.new(color.gray, 90), text_color=color.black)")
         script.append(f"    table.cell(tbl, 1, {i+1}, '{weight}', bgcolor=color.new(color.gray, 90), text_color=color.black)")
         
@@ -359,15 +358,25 @@ def run_app():
                 col_table, col_export = st.columns([2, 1])
                 
                 with col_table:
-                    # --- FIX: SORT BY WEIGHT DESCENDING ---
-                    disp_df = df_opt.copy()
-                    disp_df = disp_df.sort_values(by="Weight", ascending=False)
+                    # Sort results by weight
+                    disp_df = df_opt.copy().sort_values(by="Weight", ascending=False)
                     
-                    # Totals
+                    # --- CALCULATE TOTALS ---
                     total_weight = disp_df['Weight'].sum()
+                    
+                    # Weighted Avg RSI
                     w_rsi = (disp_df['Weight'] * disp_df['RSI']).sum() / total_weight if total_weight > 0 else 0
-                    w_val_inv = (disp_df['Weight'] / disp_df[metric_col]).sum()
-                    w_val = total_weight / w_val_inv if w_val_inv > 0 else 0
+                    
+                    # Harmonic Mean for Valuation (P/E or PEG)
+                    # Avoid division by zero
+                    if (disp_df[metric_col] == 0).any():
+                        w_val = np.nan
+                    else:
+                        w_val_inv = (disp_df['Weight'] / disp_df[metric_col]).sum()
+                        w_val = total_weight / w_val_inv if w_val_inv > 0 else 0
+                    
+                    # Weighted Avg Volatility
+                    w_vol = (disp_df['Weight'] * disp_df['Volatility']).sum() / total_weight if total_weight > 0 else 0
                     
                     summary = pd.DataFrame([{
                         "Ticker": "TOTAL", 
@@ -375,15 +384,16 @@ def run_app():
                         "Weight": total_weight, 
                         metric_col: w_val, 
                         "RSI": w_rsi,
-                        "Volatility": np.nan
+                        "Volatility": w_vol
                     }])
                     
                     final_df = pd.concat([disp_df, summary], ignore_index=True)
                     
                     # Formatting
                     final_df["Weight"] = final_df["Weight"].apply(lambda x: f"{x:.1%}")
-                    final_df[metric_col] = final_df[metric_col].apply(lambda x: f"{x:.2f}")
+                    final_df[metric_col] = final_df[metric_col].apply(lambda x: f"{x:.2f}" if pd.notnull(x) else "")
                     final_df["RSI"] = final_df["RSI"].apply(lambda x: f"{x:.1f}")
+                    final_df["Volatility"] = final_df["Volatility"].apply(lambda x: f"{x:.2%}" if pd.notnull(x) else "")
                     
                     st.dataframe(final_df, use_container_width=True)
                 
@@ -396,7 +406,6 @@ def run_app():
                         
                         st.divider()
                         st.markdown("**2. JSON (Bots):** For webhook alerts.")
-                        # Sort JSON too for consistency
                         df_json = df_opt.sort_values(by="Weight", ascending=False)
                         json_data = df_json[["Ticker", "Weight"]].to_json(orient="records")
                         st.code(json_data, language="json")
