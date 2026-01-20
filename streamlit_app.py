@@ -56,6 +56,11 @@ DEFAULT_TICKERS = [
     {"Ticker": "XLC", "Sector": "Communication Services"}
 ]
 
+# --- SAFETY INITIALIZATION ---
+# Ensures Step 2 has data even if Step 1 hasn't been run explicitly
+if "sector_targets" not in st.session_state:
+    st.session_state["sector_targets"] = BENCHMARK_SECTOR_DATA.copy()
+
 # --- SHARED HELPER FUNCTIONS ---
 
 def calculate_rsi(series, window=14):
@@ -85,12 +90,7 @@ def plot_quadrant_chart(df_in, metric_col, rsi_col, weight_col=None, title="Asse
     
     df = df_in.copy()
     data_median = df[metric_col].median()
-    
-    # Safe Defaults if data is empty or all NaN
-    if pd.isna(data_median):
-        data_median = 20.0
-    
-    if data_median > 5.0: 
+    if pd.isna(data_median) or data_median > 5.0: 
         max_val = df[metric_col].max()
         safe_max = 60 if pd.isna(max_val) else max(60, max_val * 1.1)
         VAL_THRESHOLD = 25; MAX_X = safe_max
@@ -208,7 +208,6 @@ def process_bulk_data(tickers, sector_map, mode, period="5y"):
     return final_df, hist_data, cov_matrix
 
 def run_linear_optimization(df, max_weight_per_asset, mode, sector_limits, bounds_list, use_strict_equality=True):
-    """ Helper to run GLOP linear solver with option to relax equality """
     solver = pywraplp.Solver.CreateSolver('GLOP')
     if not solver: return pd.DataFrame()
 
@@ -216,11 +215,9 @@ def run_linear_optimization(df, max_weight_per_asset, mode, sector_limits, bound
     for i, (lower, upper) in enumerate(bounds_list):
         weights.append(solver.NumVar(lower, upper, f'w_{i}'))
     
-    # Sum = 1
     constraint_sum = solver.Constraint(1.0, 1.0)
     for w in weights: constraint_sum.SetCoefficient(w, 1)
 
-    # Sector Constraints
     if sector_limits:
         sector_groups = {}
         for i, row in df.iterrows():
@@ -231,21 +228,17 @@ def run_linear_optimization(df, max_weight_per_asset, mode, sector_limits, bound
         for sec, indices in sector_groups.items():
             if sec in sector_limits:
                 limit = sector_limits[sec]
-                
-                # TOLERANCE LOGIC: 
-                # Instead of exact equality (limit, limit), use a small window (limit-tol, limit+tol)
-                # This prevents "Infeasible" errors on float precision.
-                TOLERANCE = 0.005 # 0.5% tolerance window
+                # Allow tiny tolerance to prevent floating point infeasibility
+                TOLERANCE = 0.005 
                 
                 if sec == "Information Technology" and use_strict_equality:
                     c_sec = solver.Constraint(limit - TOLERANCE, limit + TOLERANCE) 
                 else:
-                    c_sec = solver.Constraint(0.0, limit) # Relaxed to inequality
+                    c_sec = solver.Constraint(0.0, limit)
                 
                 for idx in indices:
                     c_sec.SetCoefficient(weights[idx], 1)
 
-    # Objective
     metric_col = "PEG" if "P/E/G" in mode else "PE"
     if metric_col == "PEG": scores = (df['RSI'] / 100) + (1 / df['PEG']) 
     else: scores = (df['RSI'] / 100) + ((1 / df['PE']) * 50)
@@ -266,11 +259,6 @@ def run_linear_optimization(df, max_weight_per_asset, mode, sector_limits, bound
     return pd.DataFrame()
 
 def optimize_portfolio(df, objective_type, max_weight_per_asset, mode, sector_limits=None, cov_matrix=None):
-    """
-    Hybrid Optimizer with Robust Fallback.
-    1. Try Strict Equality for Tech (Target +/- 0.5%)
-    2. If fails, Fallback to Inequality (<= Target)
-    """
     if df is None or df.empty: return pd.DataFrame()
 
     metric_col = "PEG" if "P/E/G" in mode else "PE"
@@ -287,6 +275,7 @@ def optimize_portfolio(df, objective_type, max_weight_per_asset, mode, sector_li
         if sector_limits and sec in sector_limits:
             limit = sector_limits[sec]
             count = sector_counts.get(sec, 1)
+            # If default cap is too tight to meet sector demand, relax it to limit
             if (count * max_weight_per_asset) < limit:
                 upper = limit 
         bounds_list.append((0.0, upper))
@@ -310,8 +299,8 @@ def optimize_portfolio(df, objective_type, max_weight_per_asset, mode, sector_li
                 if sec in sector_map_indices:
                     indices = sector_map_indices[sec]
                     def make_constraint(idx_list, limit_val, is_strict):
-                        if is_strict: return lambda x: np.sum(x[idx_list]) - limit_val # == 0
-                        else: return lambda x: limit_val - np.sum(x[idx_list]) # >= 0
+                        if is_strict: return lambda x: np.sum(x[idx_list]) - limit_val 
+                        else: return lambda x: limit_val - np.sum(x[idx_list]) 
                     
                     is_tech = (sec == "Information Technology")
                     c_type = 'eq' if is_tech else 'ineq'
@@ -403,10 +392,7 @@ def run_sector_rebalancer():
         fig.update_layout(
             barmode='group', 
             height=400, 
-            yaxis=dict(
-                tickformat='.0%', 
-                range=[0, max_y * 1.1] # Buffer
-            )
+            yaxis=dict(tickformat='.0%', range=[0, max_y * 1.1])
         )
         st.plotly_chart(fig, use_container_width=True)
     with tab2:
@@ -449,7 +435,8 @@ def run_stock_optimizer():
         
         if use_sector_limits and "sector_targets" in st.session_state:
             targets = st.session_state["sector_targets"]
-            display_df["Macro Cap"] = display_df["Sector"].map(targets)
+            # Fill NaN with 0.0 to prevent errors
+            display_df["Macro Cap"] = display_df["Sector"].map(targets).fillna(0.0)
         
         column_cfg = {
             "Ticker": st.column_config.TextColumn("Ticker", width="small"),
