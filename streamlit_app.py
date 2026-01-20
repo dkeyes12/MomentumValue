@@ -274,7 +274,6 @@ def optimize_portfolio(df, objective_type, max_weight_per_asset, mode, sector_li
         if sector_limits and sec in sector_limits:
             limit = sector_limits[sec]
             count = sector_counts.get(sec, 1)
-            # Relax individual cap if stricter than sector limit allows
             if (count * max_weight_per_asset) < limit:
                 upper = limit 
         bounds_list.append((0.0, upper))
@@ -333,7 +332,23 @@ def run_sector_rebalancer():
     
     live_weight = get_live_tech_weight()
     today_str = datetime.today().strftime('%m/%d/%Y')
-    st.info(f"📅 Today, {today_str}, technology makes up {live_weight:.1f}% of the S&P500 (vs. Historical average: 15%). Benefit is normalizing the weighting of technology to a weighting of your choosing; higher to increase exposure or lower to decrease exposure.")
+    
+    # --- CUSTOM CENTERED INFO BOX ---
+    st.markdown(f"""
+        <div style="
+            background-color: #e6f3ff; 
+            padding: 20px; 
+            border-radius: 10px; 
+            border: 1px solid #b8daff; 
+            text-align: center; 
+            color: #0068c9; 
+            font-family: sans-serif;
+            margin-bottom: 20px;">
+            <strong style='font-size: 1.1em;'>📅 Today, {today_str}, technology makes up {live_weight:.1f}% of the S&P500 (vs. Historical average: 15%).</strong>
+            <br>
+            <span style='font-size: 0.95em;'>Benefit is normalizing the weighting of technology to a weighting of your choosing; higher to increase exposure or lower to decrease exposure.</span>
+        </div>
+    """, unsafe_allow_html=True)
     
     st.markdown("Adjust broad market sector weights. **These targets will be saved for Step 2.**")
     
@@ -393,7 +408,6 @@ def run_sector_rebalancer():
         )
         st.plotly_chart(fig, use_container_width=True)
     with tab2:
-        # --- HIGHLIGHT TECHNOLOGY ROW YELLOW ---
         st.dataframe(
             df_alloc.style.format({
                 "Benchmark": "{:.1%}", 
@@ -436,7 +450,6 @@ def run_stock_optimizer():
         
         if use_sector_limits and "sector_targets" in st.session_state:
             targets = st.session_state["sector_targets"]
-            # FIX: Multiply by 100 AND sort
             display_df["Macro Cap"] = display_df["Sector"].map(targets).fillna(0.0) * 100
             display_df = display_df.sort_values("Macro Cap", ascending=False)
         
@@ -450,11 +463,25 @@ def run_stock_optimizer():
             )
         }
         
+        # --- HIGHLIGHTED PREVIEW TABLE ---
+        st.caption("Sector Allocations (Highlighted)")
+        st.dataframe(
+            display_df.style.format({
+                "Macro Cap": "{:.0f}%"
+            }).apply(
+                lambda x: ['background-color: #FFFFE0; color: black' if x.Sector == "Information Technology" else '' for i in x], 
+                axis=1
+            ),
+            use_container_width=True
+        )
+
+        st.caption("Edit Tickers Below:")
         edited = st.data_editor(
             display_df, 
             column_config=column_cfg,
             num_rows="dynamic", 
-            use_container_width=True
+            use_container_width=True,
+            key="ticker_editor"
         )
         
         if st.button("🚀 Optimize Portfolio", type="primary"):
@@ -504,7 +531,10 @@ def run_stock_optimizer():
                     "RSI": "{:.1f}", 
                     "Volatility": "{:.2%}", 
                     metric_col: "{:.2f}"
-                }), 
+                }).apply(
+                    lambda x: ['background-color: #FFFFE0; color: black' if 'Information Technology' in str(x.name) else '' for i in x], 
+                    axis=1
+                ), 
                 use_container_width=True
             )
             
