@@ -346,7 +346,7 @@ def run_sector_rebalancer():
             margin-bottom: 20px;">
             <strong style='font-size: 1.1em;'>📅 Today, {today_str}, Technology makes up {live_weight:.1f}% of the S&P500 (vs. Historical average: 15%).</strong>
             <br>
-            <span style='font-size: 0.95em;'>Dynamically view all sectors' adjustments given your adjustment to technology's weighting in your portfolio. Higher Technology weighting increases your exposure. Lower weighting decreases your exposure.</span>
+            <span style='font-size: 0.95em;'>Dynamically view all sectors' weightings given your adjustment to Technology's weighting in your portfolio. Higher Technology weighting increases your exposure. Lower weighting decreases your exposure.</span>
         </div>
     """, unsafe_allow_html=True)
     
