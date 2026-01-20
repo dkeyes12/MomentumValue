@@ -6,6 +6,7 @@ from ortools.linear_solver import pywraplp
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import time
+from datetime import datetime
 
 # --- SKFOLIO IMPORTS ---
 try:
@@ -50,90 +51,86 @@ def calculate_rsi(series, window=14):
     rs = gain / loss
     return 100 - (100 / (1 + rs))
 
+@st.cache_data(ttl=3600) # Cache for 1 hour to avoid spamming API
+def get_live_tech_weight(base_weight=0.315):
+    """
+    Estimates live Tech weight based on XLK vs SPY relative performance.
+    """
+    try:
+        # Fetch today's data
+        tickers = yf.tickers.Tickers("XLK SPY")
+        hist = tickers.history(period="1d")
+        
+        if not hist.empty and "Close" in hist.columns:
+            # Calculate daily return for Tech (XLK) vs Market (SPY)
+            xlk_ret = (hist["Close"]["XLK"].iloc[-1] - hist["Open"]["XLK"].iloc[0]) / hist["Open"]["XLK"].iloc[0]
+            spy_ret = (hist["Close"]["SPY"].iloc[-1] - hist["Open"]["SPY"].iloc[0]) / hist["Open"]["SPY"].iloc[0]
+            
+            # Adjust base weight by relative performance
+            # If Tech is up 2% and SPY is flat, Tech weight increases.
+            relative_perf = (1 + xlk_ret) / (1 + spy_ret)
+            estimated_weight = base_weight * relative_perf
+            return estimated_weight * 100 # Return as percentage (e.g. 31.7)
+    except Exception:
+        pass
+    return base_weight * 100
+
 def plot_quadrant_chart(df, metric_col, rsi_col, weight_col=None, title="Asset Selection Matrix"):
     """
     Plots the 2x2 Matrix.
-    - Selected Assets: Sized by weight, Colored by RSI.
-    - Unselected Assets: Small, Greyed out.
     """
     if df.empty: return go.Figure()
 
-    # Dynamic X-Axis Thresholds
     data_median = df[metric_col].median()
-    if pd.isna(data_median) or data_median > 5.0: # Likely P/E
+    if pd.isna(data_median) or data_median > 5.0: 
         max_val = df[metric_col].max()
         safe_max = 60 if pd.isna(max_val) else max(60, max_val * 1.1)
         VAL_THRESHOLD = 25; MAX_X = safe_max
         x_label = "P/E Ratio (Lower is Better)"
-    else: # Likely PEG
+    else: 
         VAL_THRESHOLD = 1.5; MAX_X = 4.0
         x_label = "PEG Ratio (Lower is Better)"
     
     fig = go.Figure()
 
-    # --- SPLIT DATA: SELECTED vs UNSELECTED ---
     if weight_col and weight_col in df.columns:
-        # Threshold to determine selection (avoid floating point zero issues)
-        df_selected = df[df[weight_col] > 0.0001].copy()
-        df_unselected = df[df[weight_col] <= 0.0001].copy()
-        
-        # Calculate bubble size for selected only
-        df_selected['Bubble_Size'] = df_selected[weight_col] * 300 
+        df['Is_Selected'] = df[weight_col] > 0.0001
+        df['Bubble_Size'] = df.apply(lambda r: r[weight_col] * 300 if r['Is_Selected'] else 10, axis=1)
     else:
-        # Fallback if no weights exist (show all as selected generic)
-        df_selected = df.copy()
-        df_unselected = pd.DataFrame()
-        df_selected['Bubble_Size'] = 15
+        df['Is_Selected'] = True
+        df['Bubble_Size'] = 15
 
-    # --- TRACE 1: UNSELECTED (GREY GHOSTS) ---
+    # Trace 1: Unselected
+    df_unselected = df[~df['Is_Selected']]
     if not df_unselected.empty:
         fig.add_trace(go.Scatter(
-            x=df_unselected[metric_col].clip(upper=MAX_X), 
-            y=df_unselected[rsi_col],
-            mode='markers+text', 
-            text=df_unselected['Ticker'], 
-            textposition="top center",
-            marker=dict(
-                size=8,              # Small fixed size
-                color='#E0E0E0',     # Light Grey
-                line=dict(width=1, color='#A0A0A0') # Darker grey border
-            ),
+            x=df_unselected[metric_col].clip(upper=MAX_X), y=df_unselected[rsi_col],
+            mode='markers+text', text=df_unselected['Ticker'], textposition="top center",
+            marker=dict(size=8, color='#E0E0E0', line=dict(width=1, color='#A0A0A0')),
             hovertemplate="<b>%{text}</b><br>RSI: %{y:.1f}<br>Valuation: %{x:.2f}<br>Status: Not Selected<extra></extra>",
             name="Unselected"
         ))
 
-    # --- TRACE 2: SELECTED (COLORED GRADIENT) ---
+    # Trace 2: Selected
+    df_selected = df[df['Is_Selected']]
     if not df_selected.empty:
         fig.add_trace(go.Scatter(
-            x=df_selected[metric_col].clip(upper=MAX_X), 
-            y=df_selected[rsi_col],
-            mode='markers+text', 
-            text=df_selected['Ticker'], 
-            textposition="top center",
+            x=df_selected[metric_col].clip(upper=MAX_X), y=df_selected[rsi_col],
+            mode='markers+text', text=df_selected['Ticker'], textposition="top center",
             marker=dict(
                 size=df_selected['Bubble_Size'],
-                color=df_selected[rsi_col], 
-                # Reverse Gradient: Green(Min) -> Red(Max)
-                colorscale='RdYlGn_r', 
-                showscale=True, 
-                colorbar=dict(title="RSI (Red=High)"), 
-                line=dict(width=1, color='DarkSlateGrey')
+                color=df_selected[rsi_col], colorscale='RdYlGn_r', showscale=True, 
+                colorbar=dict(title="RSI (Red=High)"), line=dict(width=1, color='DarkSlateGrey')
             ),
             hovertemplate="<b>%{text}</b><br>RSI: %{y:.1f}<br>Valuation: %{x:.2f}<br>Weight: %{marker.size:.2f}%<extra></extra>",
             name="Selected"
         ))
 
-    # --- QUADRANT BACKGROUNDS ---
-    # 1. Best: Low Val / High RSI -> Green
     fig.add_shape(type="rect", x0=0, y0=50, x1=VAL_THRESHOLD, y1=100, fillcolor="green", opacity=0.1, layer="below", line_width=0)
-    # 2. Expensive: High Val / High RSI -> Orange
     fig.add_shape(type="rect", x0=VAL_THRESHOLD, y0=50, x1=MAX_X, y1=100, fillcolor="orange", opacity=0.1, layer="below", line_width=0)
-    # 3. Value Trap: Low Val / Low RSI -> Yellow
     fig.add_shape(type="rect", x0=0, y0=0, x1=VAL_THRESHOLD, y1=50, fillcolor="yellow", opacity=0.1, layer="below", line_width=0)
-    # 4. Weak: High Val / Low RSI -> Red
     fig.add_shape(type="rect", x0=VAL_THRESHOLD, y0=0, x1=MAX_X, y1=50, fillcolor="red", opacity=0.1, layer="below", line_width=0)
     
-    # --- LABELS ---
     fig.add_annotation(x=VAL_THRESHOLD/2, y=95, text="VALUE + MOMENTUM", showarrow=False, font=dict(color="green", weight="bold"))
     fig.add_annotation(x=VAL_THRESHOLD + (MAX_X-VAL_THRESHOLD)/2, y=95, text="EXPENSIVE MOMENTUM", showarrow=False, font=dict(color="orange", size=10))
     fig.add_annotation(x=VAL_THRESHOLD/2, y=5, text="WEAK / VALUE TRAP", showarrow=False, font=dict(color="orange", size=10))
@@ -241,13 +238,20 @@ def optimize_portfolio(df, objective_type, max_weight_per_asset, mode, sector_li
 # --- STEP 1: REBALANCE TECHNOLOGY ---
 def run_sector_rebalancer():
     st.header("Step 1: Rebalance Technology")
+    
+    # --- HEADER: Live Tech Weight ---
+    live_weight = get_live_tech_weight()
+    today_str = datetime.today().strftime('%Y-%m-%d')
+    st.info(f"📅 **Today, {today_str}, Technology makes up ~{live_weight:.1f}% of the S&P 500.**")
+    
     st.markdown("Adjust broad market sector weights. **These targets will be saved for Step 2.**")
     
-    current_tech_pct = BENCHMARK_SECTOR_DATA["Information Technology"] * 100
+    # Use live weight as default for slider if reasonable, else benchmark
+    default_val = live_weight if 10 < live_weight < 50 else BENCHMARK_SECTOR_DATA["Information Technology"] * 100
     
     col_slide, col_metrics = st.columns([1, 2])
     with col_slide:
-        tech_cap = st.slider("Max Tech Exposure (%)", 0.0, 60.0, float(current_tech_pct), 0.5)
+        tech_cap = st.slider("Max Tech Exposure (%)", 0.0, 60.0, float(default_val), 0.5)
         
     target_tech = tech_cap / 100.0
     rem_weight_new = 1.0 - target_tech
@@ -267,7 +271,7 @@ def run_sector_rebalancer():
     
     with col_metrics:
         m1, m2 = st.columns(2)
-        m1.metric("Tech Weight", f"{tech_cap:.1f}%", f"{tech_cap - current_tech_pct:.1f}%", delta_color="inverse")
+        m1.metric("Tech Weight", f"{tech_cap:.1f}%", f"{tech_cap - live_weight:.1f}%", delta_color="inverse")
         active_share = np.sum(np.abs(df_alloc["Custom"] - df_alloc["Benchmark"])) / 2
         m2.metric("Active Share", f"{active_share:.1%}")
 
@@ -297,7 +301,6 @@ def run_stock_optimizer():
         mode_sel = st.radio("Metrics:", ["Standard (P/E)", "Popular (P/E/G)"])
         obj = st.radio("Objective:", ["Maximize Gain", "Minimize Volatility"])
         
-        # --- REORDERED: Macro Link above Max Weight ---
         use_sector_limits = False
         if "sector_targets" in st.session_state:
             st.divider()
@@ -367,7 +370,6 @@ def run_stock_optimizer():
         st.subheader("2. Optimal Allocation")
         col_tbl, col_tv = st.columns([2, 1])
         with col_tbl:
-            # --- FIX: Sort Descending ---
             disp = df_res[df_res["Weight"] > 0.001].sort_values("Weight", ascending=False).copy()
             
             tot_w = disp["Weight"].sum()
