@@ -192,10 +192,10 @@ def process_bulk_data(tickers, sector_map, mode, period="5y"):
 def optimize_portfolio(df, objective_type, max_weight_per_asset, mode, sector_limits=None, cov_matrix=None):
     """
     Hybrid Optimizer: GLOP for Gain/Linear, Scipy SLSQP for Quadratic Volatility
+    Includes STRICT adherence to sector_limits if provided.
     """
     if df is None or df.empty: return pd.DataFrame()
 
-    # Pre-Calculate Scores for constraints
     metric_col = "PEG" if "P/E/G" in mode else "PE"
     if metric_col == "PEG": scores = (df['RSI'] / 100) + (1 / df['PEG']) 
     else: scores = (df['RSI'] / 100) + ((1 / df['PE']) * 50)
@@ -210,14 +210,12 @@ def optimize_portfolio(df, objective_type, max_weight_per_asset, mode, sector_li
         def portfolio_variance(weights):
             return np.dot(weights.T, np.dot(cov_matrix.values, weights))
         
-        # Base Constraint: Sum = 1
         constraints = [{'type': 'eq', 'fun': lambda x: np.sum(x) - 1}]
         
-        # --- NEW: Add Quality Floor Constraint (Intent of User Logic) ---
-        # Portfolio Score must be >= Average Score of Universe
+        # Quality Floor Constraint
         constraints.append({'type': 'ineq', 'fun': lambda x: np.dot(x, scores.values) - avg_score})
         
-        # Sector Constraints
+        # Sector Constraints (STRICT)
         if sector_limits:
             sector_map_indices = {}
             for i, row in df.iterrows():
@@ -229,9 +227,11 @@ def optimize_portfolio(df, objective_type, max_weight_per_asset, mode, sector_li
                 if sec in sector_map_indices:
                     indices = sector_map_indices[sec]
                     def make_constraint(idx_list, limit_val):
+                        # sum(sector_weights) <= limit
                         return lambda x: limit_val - np.sum(x[idx_list])
                     constraints.append({'type': 'ineq', 'fun': make_constraint(indices, limit)})
         
+        # Bounds: Each asset 0 to max_weight
         bounds = tuple((0, max_weight_per_asset) for _ in range(num_assets))
         init_guess = np.array(num_assets * [1. / num_assets,])
         
@@ -245,11 +245,10 @@ def optimize_portfolio(df, objective_type, max_weight_per_asset, mode, sector_li
                     results.append(row)
                 return pd.DataFrame(results)
         except:
-            # Fallback to Linear if Quadratic fails
-            pass
+            pass # Fallback to linear
 
     # ==========================================
-    # CASE 2: MAXIMIZE GAIN (LINEAR) OR FALLBACK
+    # CASE 2: MAXIMIZE GAIN (LINEAR)
     # ==========================================
     solver = pywraplp.Solver.CreateSolver('GLOP')
     if not solver: return None
@@ -269,17 +268,18 @@ def optimize_portfolio(df, objective_type, max_weight_per_asset, mode, sector_li
         for sec, indices in sector_groups.items():
             if sec in sector_limits:
                 limit = sector_limits[sec]
+                # STRICT CONSTRAINT: Sum(Sector) <= Limit
+                # This overrides individual max weights if they sum to > limit
                 c_sec = solver.Constraint(0.0, limit)
                 for idx in indices:
                     c_sec.SetCoefficient(weights[idx], 1)
 
-    # --- UPDATED LOGIC AS REQUESTED ---
     objective = solver.Objective()
     if "Gain" in objective_type:
         for i, w in enumerate(weights): objective.SetCoefficient(w, scores.iloc[i])
         objective.SetMaximization()
     else:
-        # User Logic: Minimize Linear Volatility but enforce Average Score Quality
+        # Fallback linear volatility minimization with Quality Floor
         c_qual = solver.Constraint(avg_score, solver.infinity())
         for i, w in enumerate(weights): c_qual.SetCoefficient(w, scores.iloc[i])
         for i, w in enumerate(weights): objective.SetCoefficient(w, df['Volatility'].iloc[i])
