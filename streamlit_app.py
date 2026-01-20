@@ -3,6 +3,7 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 from ortools.linear_solver import pywraplp
+from scipy.optimize import minimize
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import time
@@ -34,7 +35,6 @@ BENCHMARK_SECTOR_DATA = {
     "Materials": 0.020
 }
 
-# --- UPDATED: S&P 500 SECTOR UNIVERSE ---
 DEFAULT_TICKERS = [
     {"Ticker": "XLK", "Sector": "Information Technology"},
     {"Ticker": "XLV", "Sector": "Health Care"},
@@ -74,11 +74,6 @@ def get_live_tech_weight(base_weight=0.350):
     return base_weight * 100
 
 def plot_quadrant_chart(df, metric_col, rsi_col, weight_col=None, title="Asset Selection Matrix"):
-    """
-    Plots the 2x2 Matrix.
-    - Uniform point size (Weighting removed from visual size).
-    - Color highlights selected assets vs unselected grey ghosts.
-    """
     if df.empty: return go.Figure()
 
     data_median = df[metric_col].median()
@@ -93,47 +88,36 @@ def plot_quadrant_chart(df, metric_col, rsi_col, weight_col=None, title="Asset S
     
     fig = go.Figure()
 
-    # Determine Selection Status
     if weight_col and weight_col in df.columns:
         df['Is_Selected'] = df[weight_col] > 0.0001
     else:
         df['Is_Selected'] = True
 
-    # --- TRACE 1: UNSELECTED (GREY GHOSTS) ---
     df_unselected = df[~df['Is_Selected']]
     if not df_unselected.empty:
         fig.add_trace(go.Scatter(
             x=df_unselected[metric_col].clip(upper=MAX_X), y=df_unselected[rsi_col],
             mode='markers+text', text=df_unselected['Ticker'], textposition="top center",
-            marker=dict(
-                size=12,          # FIXED SIZE
-                color='#E0E0E0',  # Light Grey
-                line=dict(width=1, color='#A0A0A0')
-            ),
+            marker=dict(size=12, color='#E0E0E0', line=dict(width=1, color='#A0A0A0')),
             hovertemplate="<b>%{text}</b><br>RSI: %{y:.1f}<br>Valuation: %{x:.2f}<br>Status: Not Selected<extra></extra>",
             name="Unselected"
         ))
 
-    # --- TRACE 2: SELECTED (COLORED) ---
     df_selected = df[df['Is_Selected']]
     if not df_selected.empty:
         fig.add_trace(go.Scatter(
             x=df_selected[metric_col].clip(upper=MAX_X), y=df_selected[rsi_col],
             mode='markers+text', text=df_selected['Ticker'], textposition="top center",
             marker=dict(
-                size=12,          # FIXED SIZE
-                color=df_selected[rsi_col], 
-                colorscale='RdYlGn_r', # Green(Min) -> Red(Max)
-                showscale=True, 
-                colorbar=dict(title="RSI (Red=High)"), 
-                line=dict(width=1, color='DarkSlateGrey')
+                size=12, 
+                color=df_selected[rsi_col], colorscale='RdYlGn_r', showscale=True, 
+                colorbar=dict(title="RSI (Red=High)"), line=dict(width=1, color='DarkSlateGrey')
             ),
             hovertemplate="<b>%{text}</b><br>RSI: %{y:.1f}<br>Valuation: %{x:.2f}<br>Weight: %{customdata[0]:.2%}<extra></extra>",
             customdata=df_selected[[weight_col]] if weight_col in df_selected.columns else np.zeros((len(df_selected), 1)),
             name="Selected"
         ))
 
-    # Background Quadrants
     fig.add_shape(type="rect", x0=0, y0=50, x1=VAL_THRESHOLD, y1=100, fillcolor="green", opacity=0.1, layer="below", line_width=0)
     fig.add_shape(type="rect", x0=VAL_THRESHOLD, y0=50, x1=MAX_X, y1=100, fillcolor="orange", opacity=0.1, layer="below", line_width=0)
     fig.add_shape(type="rect", x0=0, y0=0, x1=VAL_THRESHOLD, y1=50, fillcolor="yellow", opacity=0.1, layer="below", line_width=0)
@@ -150,12 +134,12 @@ def plot_quadrant_chart(df, metric_col, rsi_col, weight_col=None, title="Asset S
 @st.cache_data
 def process_bulk_data(tickers, sector_map, mode, period="5y"):
     ticker_list = [t.upper().strip() for t in tickers if t.strip()]
-    if not ticker_list: return None, None
+    if not ticker_list: return None, None, None
     
     try:
         bulk_data = yf.download(ticker_list, period=period, group_by='ticker', auto_adjust=False)
     except Exception:
-        return None, None
+        return None, None, None
     
     snapshot_data = []
     hist_data = {}
@@ -190,11 +174,83 @@ def process_bulk_data(tickers, sector_map, mode, period="5y"):
                     "PEG" if "P/E/G" in mode else "PE": val
                 })
         except: continue
+    
+    final_df = pd.DataFrame(snapshot_data)
+    
+    cov_matrix = None
+    if not final_df.empty and hist_data:
+        valid_tickers = final_df['Ticker'].tolist()
+        try:
+            price_df = pd.DataFrame({t: hist_data[t]['Close'] for t in valid_tickers}).dropna()
+            if not price_df.empty:
+                cov_matrix = price_df.pct_change().cov()
+        except:
+            cov_matrix = None
             
-    return pd.DataFrame(snapshot_data), hist_data
+    return final_df, hist_data, cov_matrix
 
-def optimize_portfolio(df, objective_type, max_weight_per_asset, mode, sector_limits=None):
+def optimize_portfolio(df, objective_type, max_weight_per_asset, mode, sector_limits=None, cov_matrix=None):
+    """
+    Hybrid Optimizer: GLOP for Gain/Linear, Scipy SLSQP for Quadratic Volatility
+    """
     if df is None or df.empty: return pd.DataFrame()
+
+    # Pre-Calculate Scores for constraints
+    metric_col = "PEG" if "P/E/G" in mode else "PE"
+    if metric_col == "PEG": scores = (df['RSI'] / 100) + (1 / df['PEG']) 
+    else: scores = (df['RSI'] / 100) + ((1 / df['PE']) * 50)
+    avg_score = scores.mean()
+
+    # ==========================================
+    # CASE 1: MINIMIZE VOLATILITY (QUADRATIC)
+    # ==========================================
+    if "Volatility" in objective_type and cov_matrix is not None:
+        num_assets = len(df)
+        
+        def portfolio_variance(weights):
+            return np.dot(weights.T, np.dot(cov_matrix.values, weights))
+        
+        # Base Constraint: Sum = 1
+        constraints = [{'type': 'eq', 'fun': lambda x: np.sum(x) - 1}]
+        
+        # --- NEW: Add Quality Floor Constraint (Intent of User Logic) ---
+        # Portfolio Score must be >= Average Score of Universe
+        constraints.append({'type': 'ineq', 'fun': lambda x: np.dot(x, scores.values) - avg_score})
+        
+        # Sector Constraints
+        if sector_limits:
+            sector_map_indices = {}
+            for i, row in df.iterrows():
+                sec = row['Sector']
+                if sec not in sector_map_indices: sector_map_indices[sec] = []
+                sector_map_indices[sec].append(i)
+            
+            for sec, limit in sector_limits.items():
+                if sec in sector_map_indices:
+                    indices = sector_map_indices[sec]
+                    def make_constraint(idx_list, limit_val):
+                        return lambda x: limit_val - np.sum(x[idx_list])
+                    constraints.append({'type': 'ineq', 'fun': make_constraint(indices, limit)})
+        
+        bounds = tuple((0, max_weight_per_asset) for _ in range(num_assets))
+        init_guess = np.array(num_assets * [1. / num_assets,])
+        
+        try:
+            result = minimize(portfolio_variance, init_guess, method='SLSQP', bounds=bounds, constraints=constraints, tol=1e-6)
+            if result.success:
+                results = []
+                for i, w in enumerate(result.x):
+                    row = df.iloc[i].to_dict()
+                    row["Weight"] = w
+                    results.append(row)
+                return pd.DataFrame(results)
+        except:
+            # Fallback to Linear if Quadratic fails
+            pass
+
+    # ==========================================
+    # CASE 2: MAXIMIZE GAIN (LINEAR) OR FALLBACK
+    # ==========================================
     solver = pywraplp.Solver.CreateSolver('GLOP')
     if not solver: return None
 
@@ -217,16 +273,13 @@ def optimize_portfolio(df, objective_type, max_weight_per_asset, mode, sector_li
                 for idx in indices:
                     c_sec.SetCoefficient(weights[idx], 1)
 
-    metric_col = "PEG" if "P/E/G" in mode else "PE"
-    if metric_col == "PEG": scores = (df['RSI'] / 100) + (1 / df['PEG']) 
-    else: scores = (df['RSI'] / 100) + ((1 / df['PE']) * 50)
-    
+    # --- UPDATED LOGIC AS REQUESTED ---
     objective = solver.Objective()
     if "Gain" in objective_type:
         for i, w in enumerate(weights): objective.SetCoefficient(w, scores.iloc[i])
         objective.SetMaximization()
     else:
-        avg_score = scores.mean()
+        # User Logic: Minimize Linear Volatility but enforce Average Score Quality
         c_qual = solver.Constraint(avg_score, solver.infinity())
         for i, w in enumerate(weights): c_qual.SetCoefficient(w, scores.iloc[i])
         for i, w in enumerate(weights): objective.SetCoefficient(w, df['Volatility'].iloc[i])
@@ -348,11 +401,11 @@ def run_stock_optimizer():
             with st.spinner("Fetching data..."):
                 t_list = edited["Ticker"].tolist()
                 s_map = dict(zip(edited["Ticker"], edited["Sector"]))
-                df_mkt, hist = process_bulk_data(t_list, s_map, mode_sel)
+                df_mkt, hist, cov = process_bulk_data(t_list, s_map, mode_sel)
                 
                 if df_mkt is not None and not df_mkt.empty:
                     limits = st.session_state["sector_targets"] if use_sector_limits else None
-                    df_res = optimize_portfolio(df_mkt, obj, max_w, mode_sel, sector_limits=limits)
+                    df_res = optimize_portfolio(df_mkt, obj, max_w, mode_sel, sector_limits=limits, cov_matrix=cov)
                     
                     st.session_state["opt_res"] = df_res
                     st.session_state["mkt_data"] = df_mkt
