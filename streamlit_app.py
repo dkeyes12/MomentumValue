@@ -85,7 +85,12 @@ def plot_quadrant_chart(df_in, metric_col, rsi_col, weight_col=None, title="Asse
     
     df = df_in.copy()
     data_median = df[metric_col].median()
-    if pd.isna(data_median) or data_median > 5.0: 
+    
+    # Safe Defaults if data is empty or all NaN
+    if pd.isna(data_median):
+        data_median = 20.0
+    
+    if data_median > 5.0: 
         max_val = df[metric_col].max()
         safe_max = 60 if pd.isna(max_val) else max(60, max_val * 1.1)
         VAL_THRESHOLD = 25; MAX_X = safe_max
@@ -174,7 +179,12 @@ def process_bulk_data(tickers, sector_map, mode, period="5y"):
                 else: val = info.get('trailingPE') or info.get('forwardPE')
             except: val = np.nan
             
-            if val and val > 0:
+            # --- DATA CLEANING: Fill NaNs for robustness ---
+            if pd.isna(rsi): rsi = 50.0 
+            if pd.isna(vol): vol = 0.20
+            if pd.isna(val) or val <= 0: val = 20.0
+            
+            if val > 0:
                 snapshot_data.append({
                     "Ticker": t, "Sector": sector_map.get(t, "Unknown"),
                     "Price": df['Close'].iloc[-1], "RSI": rsi,
@@ -197,10 +207,69 @@ def process_bulk_data(tickers, sector_map, mode, period="5y"):
             
     return final_df, hist_data, cov_matrix
 
+def run_linear_optimization(df, max_weight_per_asset, mode, sector_limits, bounds_list, use_strict_equality=True):
+    """ Helper to run GLOP linear solver with option to relax equality """
+    solver = pywraplp.Solver.CreateSolver('GLOP')
+    if not solver: return pd.DataFrame()
+
+    weights = []
+    for i, (lower, upper) in enumerate(bounds_list):
+        weights.append(solver.NumVar(lower, upper, f'w_{i}'))
+    
+    # Sum = 1
+    constraint_sum = solver.Constraint(1.0, 1.0)
+    for w in weights: constraint_sum.SetCoefficient(w, 1)
+
+    # Sector Constraints
+    if sector_limits:
+        sector_groups = {}
+        for i, row in df.iterrows():
+            sec = row['Sector']
+            if sec not in sector_groups: sector_groups[sec] = []
+            sector_groups[sec].append(i)
+        
+        for sec, indices in sector_groups.items():
+            if sec in sector_limits:
+                limit = sector_limits[sec]
+                
+                # TOLERANCE LOGIC: 
+                # Instead of exact equality (limit, limit), use a small window (limit-tol, limit+tol)
+                # This prevents "Infeasible" errors on float precision.
+                TOLERANCE = 0.005 # 0.5% tolerance window
+                
+                if sec == "Information Technology" and use_strict_equality:
+                    c_sec = solver.Constraint(limit - TOLERANCE, limit + TOLERANCE) 
+                else:
+                    c_sec = solver.Constraint(0.0, limit) # Relaxed to inequality
+                
+                for idx in indices:
+                    c_sec.SetCoefficient(weights[idx], 1)
+
+    # Objective
+    metric_col = "PEG" if "P/E/G" in mode else "PE"
+    if metric_col == "PEG": scores = (df['RSI'] / 100) + (1 / df['PEG']) 
+    else: scores = (df['RSI'] / 100) + ((1 / df['PE']) * 50)
+    
+    objective = solver.Objective()
+    for i, w in enumerate(weights): objective.SetCoefficient(w, scores.iloc[i])
+    objective.SetMaximization()
+
+    status = solver.Solve()
+    if status == pywraplp.Solver.OPTIMAL:
+        results = []
+        for i, w in enumerate(weights):
+            val = w.solution_value()
+            row = df.iloc[i].to_dict()
+            row["Weight"] = val
+            results.append(row)
+        return pd.DataFrame(results)
+    return pd.DataFrame()
+
 def optimize_portfolio(df, objective_type, max_weight_per_asset, mode, sector_limits=None, cov_matrix=None):
     """
-    Hybrid Optimizer with Feasibility Override.
-    Ensures optimization occurs even if Macro Weight > Sum of Individual Caps.
+    Hybrid Optimizer with Robust Fallback.
+    1. Try Strict Equality for Tech (Target +/- 0.5%)
+    2. If fails, Fallback to Inequality (<= Target)
     """
     if df is None or df.empty: return pd.DataFrame()
 
@@ -209,32 +278,23 @@ def optimize_portfolio(df, objective_type, max_weight_per_asset, mode, sector_li
     else: scores = (df['RSI'] / 100) + ((1 / df['PE']) * 50)
     avg_score = scores.mean()
 
-    # --- INTELLIGENT BOUNDS CALCULATION ---
+    # --- DYNAMIC BOUNDS ---
     bounds_list = []
     sector_counts = df['Sector'].value_counts().to_dict()
-    
     for i, row in df.iterrows():
         sec = row['Sector']
         upper = max_weight_per_asset 
-        
         if sector_limits and sec in sector_limits:
             limit = sector_limits[sec]
             count = sector_counts.get(sec, 1)
-            capacity = count * max_weight_per_asset
-            
-            if capacity < limit:
+            if (count * max_weight_per_asset) < limit:
                 upper = limit 
-        
         bounds_list.append((0.0, upper))
 
-    # ==========================================
-    # CASE 1: MINIMIZE VOLATILITY (QUADRATIC)
-    # ==========================================
+    # --- CASE 1: MINIMIZE VOLATILITY (QUADRATIC) ---
     if "Volatility" in objective_type and cov_matrix is not None:
         num_assets = len(df)
-        
-        def portfolio_variance(weights):
-            return np.dot(weights.T, np.dot(cov_matrix.values, weights))
+        def portfolio_variance(weights): return np.dot(weights.T, np.dot(cov_matrix.values, weights))
         
         constraints = [{'type': 'eq', 'fun': lambda x: np.sum(x) - 1}]
         constraints.append({'type': 'ineq', 'fun': lambda x: np.dot(x, scores.values) - avg_score})
@@ -249,14 +309,13 @@ def optimize_portfolio(df, objective_type, max_weight_per_asset, mode, sector_li
             for sec, limit in sector_limits.items():
                 if sec in sector_map_indices:
                     indices = sector_map_indices[sec]
-                    def make_constraint(idx_list, limit_val):
-                        if sec == "Information Technology":
-                            return lambda x: np.sum(x[idx_list]) - limit_val 
-                        else:
-                            return lambda x: limit_val - np.sum(x[idx_list]) 
+                    def make_constraint(idx_list, limit_val, is_strict):
+                        if is_strict: return lambda x: np.sum(x[idx_list]) - limit_val # == 0
+                        else: return lambda x: limit_val - np.sum(x[idx_list]) # >= 0
                     
-                    c_type = 'eq' if sec == "Information Technology" else 'ineq'
-                    constraints.append({'type': c_type, 'fun': make_constraint(indices, limit)})
+                    is_tech = (sec == "Information Technology")
+                    c_type = 'eq' if is_tech else 'ineq'
+                    constraints.append({'type': c_type, 'fun': make_constraint(indices, limit, is_tech)})
         
         init_guess = np.array(num_assets * [1. / num_assets,])
         try:
@@ -269,59 +328,18 @@ def optimize_portfolio(df, objective_type, max_weight_per_asset, mode, sector_li
                     results.append(row)
                 return pd.DataFrame(results)
         except:
-            pass 
+            pass # Failover to Linear
 
-    # ==========================================
-    # CASE 2: MAXIMIZE GAIN (LINEAR)
-    # ==========================================
-    solver = pywraplp.Solver.CreateSolver('GLOP')
-    if not solver: return None
-
-    weights = []
-    for i, (lower, upper) in enumerate(bounds_list):
-        weights.append(solver.NumVar(lower, upper, f'w_{i}'))
+    # --- CASE 2: MAXIMIZE GAIN (LINEAR) ---
+    # Attempt 1: Strict Equality
+    df_res = run_linear_optimization(df, max_weight_per_asset, mode, sector_limits, bounds_list, use_strict_equality=True)
     
-    constraint_sum = solver.Constraint(1.0, 1.0)
-    for w in weights: constraint_sum.SetCoefficient(w, 1)
-
-    if sector_limits:
-        sector_groups = {}
-        for i, row in df.iterrows():
-            sec = row['Sector']
-            if sec not in sector_groups: sector_groups[sec] = []
-            sector_groups[sec].append(i)
+    # Attempt 2: Fallback (Relaxed Inequality) if Attempt 1 returned empty
+    if df_res.empty:
+        st.warning("⚠️ Strict target constraints infeasible. Relaxing to 'Maximum' constraints instead.")
+        df_res = run_linear_optimization(df, max_weight_per_asset, mode, sector_limits, bounds_list, use_strict_equality=False)
         
-        for sec, indices in sector_groups.items():
-            if sec in sector_limits:
-                limit = sector_limits[sec]
-                if sec == "Information Technology":
-                    c_sec = solver.Constraint(limit, limit) 
-                else:
-                    c_sec = solver.Constraint(0.0, limit)
-                
-                for idx in indices:
-                    c_sec.SetCoefficient(weights[idx], 1)
-
-    objective = solver.Objective()
-    if "Gain" in objective_type:
-        for i, w in enumerate(weights): objective.SetCoefficient(w, scores.iloc[i])
-        objective.SetMaximization()
-    else:
-        c_qual = solver.Constraint(avg_score, solver.infinity())
-        for i, w in enumerate(weights): c_qual.SetCoefficient(w, scores.iloc[i])
-        for i, w in enumerate(weights): objective.SetCoefficient(w, df['Volatility'].iloc[i])
-        objective.SetMinimization()
-
-    status = solver.Solve()
-    if status == pywraplp.Solver.OPTIMAL:
-        results = []
-        for i, w in enumerate(weights):
-            val = w.solution_value()
-            row = df.iloc[i].to_dict()
-            row["Weight"] = val
-            results.append(row)
-        return pd.DataFrame(results)
-    return pd.DataFrame()
+    return df_res
 
 # --- STEP 1: REBALANCE TECHNOLOGY ---
 def run_sector_rebalancer():
@@ -438,7 +456,7 @@ def run_stock_optimizer():
             "Sector": st.column_config.TextColumn("Sector", width="medium"),
             "Macro Cap": st.column_config.NumberColumn(
                 "Macro Cap", 
-                format="%.0f%%", # UPDATED: Integer percentages
+                format="%.0f%%", 
                 disabled=True
             )
         }
