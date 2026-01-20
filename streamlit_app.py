@@ -393,12 +393,16 @@ def run_sector_rebalancer():
         )
         st.plotly_chart(fig, use_container_width=True)
     with tab2:
+        # --- HIGHLIGHT TECHNOLOGY ROW YELLOW ---
         st.dataframe(
             df_alloc.style.format({
                 "Benchmark": "{:.1%}", 
                 "Custom": "{:.1%}", 
                 "Delta": "{:+.1%}"
-            }), 
+            }).apply(
+                lambda x: ['background-color: #FFFFE0; color: black' if x.Sector == "Information Technology" else '' for i in x], 
+                axis=1
+            ), 
             column_order=["Sector", "Ticker", "Benchmark", "Custom", "Delta"],
             use_container_width=True
         )
@@ -432,15 +436,16 @@ def run_stock_optimizer():
         
         if use_sector_limits and "sector_targets" in st.session_state:
             targets = st.session_state["sector_targets"]
-            # FIX: Multiply by 100 to display as percentage integer (0.35 -> 35%)
+            # FIX: Multiply by 100 AND sort
             display_df["Macro Cap"] = display_df["Sector"].map(targets).fillna(0.0) * 100
+            display_df = display_df.sort_values("Macro Cap", ascending=False)
         
         column_cfg = {
             "Ticker": st.column_config.TextColumn("Ticker", width="small"),
             "Sector": st.column_config.TextColumn("Sector", width="medium"),
             "Macro Cap": st.column_config.NumberColumn(
                 "Macro Cap", 
-                format="%.0f%%", # Now 35 -> 35%
+                format="%.0f%%", 
                 disabled=True
             )
         }
@@ -522,6 +527,27 @@ def run_stock_optimizer():
                     lines.append(f"table.cell(t, 0, {idx}, '{r['Ticker']}')")
                     lines.append(f"table.cell(t, 1, {idx}, '{r['Weight']*100:.2f}%')")
                 st.code("\n".join(lines))
+
+        st.divider()
+        st.subheader("3. Backtest Analysis")
+        if SKFOLIO_AVAILABLE and hist:
+            try:
+                p_df = pd.DataFrame({t: d['Close'] for t, d in hist.items()}).dropna()
+                X = prices_to_returns(p_df)
+                
+                sel_ticks = disp["Ticker"].tolist()
+                sel_ws = disp["Weight"].tolist()
+                X_strat = X[sel_ticks]
+                
+                strat = Portfolio(X=X_strat, weights=sel_ws, name="Optimized")
+                bench = Portfolio(X=X, weights=[1/len(X.columns)]*len(X.columns), name="Equal Weight Universe")
+                pop = Population([strat, bench])
+                
+                c1, c2 = st.columns(2)
+                with c1: st.plotly_chart(pop.plot_cumulative_returns(), use_container_width=True)
+                with c2: st.dataframe(pop.summary().astype(str), use_container_width=True)
+            except Exception as e:
+                st.error(f"Backtest Error: {e}")
 
         st.divider()
         with st.expander("ℹ️ How the Optimization Logic Works"):
