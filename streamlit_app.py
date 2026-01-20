@@ -319,11 +319,11 @@ def optimize_portfolio(df, objective_type, max_weight_per_asset, mode, sector_li
 
 # --- STEP 1: REBALANCE TECHNOLOGY ---
 def run_sector_rebalancer():
-    st.header("Step 1: Rebalance Technology")
+    st.header("Step 1: Rebalance Technology's Weighting in Your Porfolio")
     
     live_weight = get_live_tech_weight()
-    today_str = datetime.today().strftime('%d-%m-%Y')
-    st.info(f"📅 Today, {today_str}, technology makes up {live_weight:.1f}% of the S&P500. Historically technology has been 15%.")
+    today_str = datetime.today().strftime('%m/%m/%Y')
+    st.info(f"📅 Today, {today_str}, technology makes up {live_weight:.1f}% of the S&P500 (vs. historical 15%). ")
     
     st.markdown("Adjust broad market sector weights. **These targets will be saved for Step 2.**")
     
