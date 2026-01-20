@@ -35,19 +35,11 @@ BENCHMARK_SECTOR_DATA = {
     "Materials": 0.020
 }
 
-# Mapping for Step 1 Table
 SECTOR_TICKER_MAP = {
-    "Information Technology": "XLK",
-    "Health Care": "XLV",
-    "Financials": "XLF",
-    "Real Estate": "XLRE",
-    "Energy": "XLE",
-    "Materials": "XLB",
-    "Consumer Discretionary": "XLY",
-    "Consumer Staples": "XLP",
-    "Industrials": "XLI",
-    "Utilities": "XLU",
-    "Communication Services": "XLC"
+    "Information Technology": "XLK", "Health Care": "XLV", "Financials": "XLF",
+    "Real Estate": "XLRE", "Energy": "XLE", "Materials": "XLB",
+    "Consumer Discretionary": "XLY", "Consumer Staples": "XLP",
+    "Industrials": "XLI", "Utilities": "XLU", "Communication Services": "XLC"
 }
 
 DEFAULT_TICKERS = [
@@ -89,14 +81,9 @@ def get_live_tech_weight(base_weight=0.350):
     return base_weight * 100
 
 def plot_quadrant_chart(df_in, metric_col, rsi_col, weight_col=None, title="Asset Selection Matrix"):
-    """
-    Plots the 2x2 Matrix using a COPY of the dataframe to prevent side effects (e.g. Is_Selected column leaking).
-    """
     if df_in.empty: return go.Figure()
     
-    # --- CRITICAL FIX: Work on a copy ---
     df = df_in.copy()
-
     data_median = df[metric_col].median()
     if pd.isna(data_median) or data_median > 5.0: 
         max_val = df[metric_col].max()
@@ -211,12 +198,34 @@ def process_bulk_data(tickers, sector_map, mode, period="5y"):
     return final_df, hist_data, cov_matrix
 
 def optimize_portfolio(df, objective_type, max_weight_per_asset, mode, sector_limits=None, cov_matrix=None):
+    """
+    Hybrid Optimizer with Feasibility Override.
+    Ensures optimization occurs even if Macro Weight > Sum of Individual Caps.
+    """
     if df is None or df.empty: return pd.DataFrame()
 
     metric_col = "PEG" if "P/E/G" in mode else "PE"
     if metric_col == "PEG": scores = (df['RSI'] / 100) + (1 / df['PEG']) 
     else: scores = (df['RSI'] / 100) + ((1 / df['PE']) * 50)
     avg_score = scores.mean()
+
+    # --- INTELLIGENT BOUNDS CALCULATION ---
+    bounds_list = []
+    sector_counts = df['Sector'].value_counts().to_dict()
+    
+    for i, row in df.iterrows():
+        sec = row['Sector']
+        upper = max_weight_per_asset 
+        
+        if sector_limits and sec in sector_limits:
+            limit = sector_limits[sec]
+            count = sector_counts.get(sec, 1)
+            capacity = count * max_weight_per_asset
+            
+            if capacity < limit:
+                upper = limit 
+        
+        bounds_list.append((0.0, upper))
 
     # ==========================================
     # CASE 1: MINIMIZE VOLATILITY (QUADRATIC)
@@ -228,7 +237,6 @@ def optimize_portfolio(df, objective_type, max_weight_per_asset, mode, sector_li
             return np.dot(weights.T, np.dot(cov_matrix.values, weights))
         
         constraints = [{'type': 'eq', 'fun': lambda x: np.sum(x) - 1}]
-        
         constraints.append({'type': 'ineq', 'fun': lambda x: np.dot(x, scores.values) - avg_score})
         
         if sector_limits:
@@ -242,20 +250,17 @@ def optimize_portfolio(df, objective_type, max_weight_per_asset, mode, sector_li
                 if sec in sector_map_indices:
                     indices = sector_map_indices[sec]
                     def make_constraint(idx_list, limit_val):
-                        # STRICT EQUALITY FOR TECH
                         if sec == "Information Technology":
-                            return lambda x: np.sum(x[idx_list]) - limit_val # == 0
+                            return lambda x: np.sum(x[idx_list]) - limit_val 
                         else:
-                            return lambda x: limit_val - np.sum(x[idx_list]) # >= 0
+                            return lambda x: limit_val - np.sum(x[idx_list]) 
                     
                     c_type = 'eq' if sec == "Information Technology" else 'ineq'
                     constraints.append({'type': c_type, 'fun': make_constraint(indices, limit)})
         
-        bounds = tuple((0, max_weight_per_asset) for _ in range(num_assets))
         init_guess = np.array(num_assets * [1. / num_assets,])
-        
         try:
-            result = minimize(portfolio_variance, init_guess, method='SLSQP', bounds=bounds, constraints=constraints, tol=1e-6)
+            result = minimize(portfolio_variance, init_guess, method='SLSQP', bounds=tuple(bounds_list), constraints=constraints, tol=1e-6)
             if result.success:
                 results = []
                 for i, w in enumerate(result.x):
@@ -272,7 +277,9 @@ def optimize_portfolio(df, objective_type, max_weight_per_asset, mode, sector_li
     solver = pywraplp.Solver.CreateSolver('GLOP')
     if not solver: return None
 
-    weights = [solver.NumVar(0.0, max_weight_per_asset, f'w_{i}') for i in range(len(df))]
+    weights = []
+    for i, (lower, upper) in enumerate(bounds_list):
+        weights.append(solver.NumVar(lower, upper, f'w_{i}'))
     
     constraint_sum = solver.Constraint(1.0, 1.0)
     for w in weights: constraint_sum.SetCoefficient(w, 1)
@@ -287,7 +294,6 @@ def optimize_portfolio(df, objective_type, max_weight_per_asset, mode, sector_li
         for sec, indices in sector_groups.items():
             if sec in sector_limits:
                 limit = sector_limits[sec]
-                # STRICT EQUALITY FOR TECH
                 if sec == "Information Technology":
                     c_sec = solver.Constraint(limit, limit) 
                 else:
@@ -319,11 +325,11 @@ def optimize_portfolio(df, objective_type, max_weight_per_asset, mode, sector_li
 
 # --- STEP 1: REBALANCE TECHNOLOGY ---
 def run_sector_rebalancer():
-    st.header("Step 1: Rebalance Technology's Weighting in Your Porfolio")
+    st.header("Step 1: Rebalance Technology")
     
     live_weight = get_live_tech_weight()
-    today_str = datetime.today().strftime('%m/%m/%Y')
-    st.info(f"📅 Today, {today_str}, technology makes up {live_weight:.1f}% of the S&P500 (vs. historical 15%). ")
+    today_str = datetime.today().strftime('%d/%m/%Y')
+    st.info(f"📅 Today, {today_str}, technology makes up {live_weight:.1f}% of the S&P500. Historically technology has been 15%.")
     
     st.markdown("Adjust broad market sector weights. **These targets will be saved for Step 2.**")
     
@@ -342,7 +348,7 @@ def run_sector_rebalancer():
         else: new_alloc[sec] = w * scale
     
     st.session_state["sector_targets"] = new_alloc
-    st.success(f"✅ Sector targets saved! Tech fixed at {tech_cap}%. Go to 'Step 2' Given rebalance, optimize MomentumValue")
+    st.success(f"✅ Sector targets saved! Tech fixed at {tech_cap}%. Go to 'Step 2' to apply them.")
 
     df_alloc = pd.DataFrame([
         {
@@ -478,6 +484,18 @@ def run_stock_optimizer():
                 use_container_width=True
             )
             
+            # --- ADDED BACK: Strategy Breakdown ---
+            with st.expander("📊 Strategy Breakdown: Allocation Methodology"):
+                st.markdown("""
+                This model employs a multi-factor approach, optimizing for **Earnings Yield** (Value) and **Relative Strength** (Momentum).
+                
+                * **Weighting:** The optimal capital allocation coefficient derived from the linear optimization solver.
+                * **RSI (Momentum Factor):** The portfolio RSI is the **Weighted Arithmetic Mean** of individual constituents.
+                * **P/E (Value Factor):** We utilize the **Weighted Harmonic Mean** rather than a simple arithmetic average.
+                
+                **Why Harmonic Mean?** Averaging valuation ratios (like P/E) directly using an arithmetic mean creates a mathematical bias that overstates the "expensiveness" of the portfolio. The Harmonic Mean correctly averages the underlying "Earnings Yields" (E/P), providing a true reflection of the portfolio's aggregate valuation.
+                """)
+
         with col_tv:
             with st.expander("📤 TradingView Export"):
                 st.write("Copy/Paste to Pine Editor:")
@@ -507,6 +525,23 @@ def run_stock_optimizer():
                 with c2: st.dataframe(pop.summary().astype(str), use_container_width=True)
             except Exception as e:
                 st.error(f"Backtest Error: {e}")
+
+        # --- ADDED BACK: Logic Summary ---
+        st.divider()
+        with st.expander("ℹ️ How the Optimization Logic Works"):
+            st.markdown(r"""
+            ### 1. The Scoring Formula
+            The optimizer assigns a **"Growth-Momentum Score"** to every asset:
+            
+            $$
+            \text{Score} = \underbrace{\left( \frac{\text{RSI}}{100} \right)}_{\text{Momentum}} + \underbrace{\left( \frac{1}{\text{PEG Ratio}} \right)}_{\text{Value}}
+            $$
+
+            ### 2. Linear vs. Quadratic Optimization 
+            
+            * **Linear Programming (Factor Exposure):** This tool utilizes Linear Programming (GLOP solver) to maximize direct factor exposure. Instead of minimizing variance through correlation, we mitigate risk via **concentration constraints** (hard limits on max allocation). This allows for a computationally efficient ($O(n)$) maximization of the 'Growth + Momentum' alpha score without the instability often introduced by covariance estimation errors in small samples.
+            * **Quadratic Programming (MPT):** Modern Portfolio Theory typically employs Quadratic Programming to minimize portfolio variance ($\sigma^2$). This requires calculating the full covariance matrix $\Sigma$ to account for pairwise asset correlations ($O(n^2)$ complexity). It optimizes for the lowest risk at a given return level.
+            """)
 
 # --- MAIN CONTROLLER ---
 def run_app():
