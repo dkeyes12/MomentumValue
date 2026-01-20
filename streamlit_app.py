@@ -57,7 +57,6 @@ DEFAULT_TICKERS = [
 ]
 
 # --- SAFETY INITIALIZATION ---
-# Ensures Step 2 has data even if Step 1 hasn't been run explicitly
 if "sector_targets" not in st.session_state:
     st.session_state["sector_targets"] = BENCHMARK_SECTOR_DATA.copy()
 
@@ -90,7 +89,9 @@ def plot_quadrant_chart(df_in, metric_col, rsi_col, weight_col=None, title="Asse
     
     df = df_in.copy()
     data_median = df[metric_col].median()
-    if pd.isna(data_median) or data_median > 5.0: 
+    if pd.isna(data_median): data_median = 20.0
+    
+    if data_median > 5.0: 
         max_val = df[metric_col].max()
         safe_max = 60 if pd.isna(max_val) else max(60, max_val * 1.1)
         VAL_THRESHOLD = 25; MAX_X = safe_max
@@ -179,7 +180,6 @@ def process_bulk_data(tickers, sector_map, mode, period="5y"):
                 else: val = info.get('trailingPE') or info.get('forwardPE')
             except: val = np.nan
             
-            # --- DATA CLEANING: Fill NaNs for robustness ---
             if pd.isna(rsi): rsi = 50.0 
             if pd.isna(vol): vol = 0.20
             if pd.isna(val) or val <= 0: val = 20.0
@@ -228,7 +228,6 @@ def run_linear_optimization(df, max_weight_per_asset, mode, sector_limits, bound
         for sec, indices in sector_groups.items():
             if sec in sector_limits:
                 limit = sector_limits[sec]
-                # Allow tiny tolerance to prevent floating point infeasibility
                 TOLERANCE = 0.005 
                 
                 if sec == "Information Technology" and use_strict_equality:
@@ -248,7 +247,7 @@ def run_linear_optimization(df, max_weight_per_asset, mode, sector_limits, bound
     objective.SetMaximization()
 
     status = solver.Solve()
-    if status == pywraplp.Solver.OPTIMAL:
+    if status == pywraplp.Solver.OPTIMAL or status == pywraplp.Solver.FEASIBLE:
         results = []
         for i, w in enumerate(weights):
             val = w.solution_value()
@@ -275,7 +274,7 @@ def optimize_portfolio(df, objective_type, max_weight_per_asset, mode, sector_li
         if sector_limits and sec in sector_limits:
             limit = sector_limits[sec]
             count = sector_counts.get(sec, 1)
-            # If default cap is too tight to meet sector demand, relax it to limit
+            # Relax individual cap if stricter than sector limit allows
             if (count * max_weight_per_asset) < limit:
                 upper = limit 
         bounds_list.append((0.0, upper))
@@ -320,10 +319,8 @@ def optimize_portfolio(df, objective_type, max_weight_per_asset, mode, sector_li
             pass # Failover to Linear
 
     # --- CASE 2: MAXIMIZE GAIN (LINEAR) ---
-    # Attempt 1: Strict Equality
     df_res = run_linear_optimization(df, max_weight_per_asset, mode, sector_limits, bounds_list, use_strict_equality=True)
     
-    # Attempt 2: Fallback (Relaxed Inequality) if Attempt 1 returned empty
     if df_res.empty:
         st.warning("⚠️ Strict target constraints infeasible. Relaxing to 'Maximum' constraints instead.")
         df_res = run_linear_optimization(df, max_weight_per_asset, mode, sector_limits, bounds_list, use_strict_equality=False)
@@ -435,15 +432,15 @@ def run_stock_optimizer():
         
         if use_sector_limits and "sector_targets" in st.session_state:
             targets = st.session_state["sector_targets"]
-            # Fill NaN with 0.0 to prevent errors
-            display_df["Macro Cap"] = display_df["Sector"].map(targets).fillna(0.0)
+            # FIX: Multiply by 100 to display as percentage integer (0.35 -> 35%)
+            display_df["Macro Cap"] = display_df["Sector"].map(targets).fillna(0.0) * 100
         
         column_cfg = {
             "Ticker": st.column_config.TextColumn("Ticker", width="small"),
             "Sector": st.column_config.TextColumn("Sector", width="medium"),
             "Macro Cap": st.column_config.NumberColumn(
                 "Macro Cap", 
-                format="%.0f%%", 
+                format="%.0f%%", # Now 35 -> 35%
                 disabled=True
             )
         }
@@ -525,27 +522,6 @@ def run_stock_optimizer():
                     lines.append(f"table.cell(t, 0, {idx}, '{r['Ticker']}')")
                     lines.append(f"table.cell(t, 1, {idx}, '{r['Weight']*100:.2f}%')")
                 st.code("\n".join(lines))
-
-        st.divider()
-        st.subheader("3. Backtest Analysis")
-        if SKFOLIO_AVAILABLE and hist:
-            try:
-                p_df = pd.DataFrame({t: d['Close'] for t, d in hist.items()}).dropna()
-                X = prices_to_returns(p_df)
-                
-                sel_ticks = disp["Ticker"].tolist()
-                sel_ws = disp["Weight"].tolist()
-                X_strat = X[sel_ticks]
-                
-                strat = Portfolio(X=X_strat, weights=sel_ws, name="Optimized")
-                bench = Portfolio(X=X, weights=[1/len(X.columns)]*len(X.columns), name="Equal Weight Universe")
-                pop = Population([strat, bench])
-                
-                c1, c2 = st.columns(2)
-                with c1: st.plotly_chart(pop.plot_cumulative_returns(), use_container_width=True)
-                with c2: st.dataframe(pop.summary().astype(str), use_container_width=True)
-            except Exception as e:
-                st.error(f"Backtest Error: {e}")
 
         st.divider()
         with st.expander("ℹ️ How the Optimization Logic Works"):
