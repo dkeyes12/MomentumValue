@@ -198,6 +198,10 @@ def process_bulk_data(tickers, sector_map, mode, period="5y"):
     return final_df, hist_data, cov_matrix
 
 def optimize_portfolio(df, objective_type, max_weight_per_asset, mode, sector_limits=None, cov_matrix=None):
+    """
+    Hybrid Optimizer with Feasibility Override.
+    Ensures optimization occurs even if Macro Weight > Sum of Individual Caps.
+    """
     if df is None or df.empty: return pd.DataFrame()
 
     metric_col = "PEG" if "P/E/G" in mode else "PE"
@@ -324,7 +328,7 @@ def run_sector_rebalancer():
     st.header("Step 1: Rebalance Technology")
     
     live_weight = get_live_tech_weight()
-    today_str = datetime.today().strftime('%m/%d/%Y')
+    today_str = datetime.today().strftime('%Y-%m-%d')
     st.info(f"📅 Today, {today_str}, technology makes up {live_weight:.1f}% of the S&P500. Historically technology has been 15%.")
     
     st.markdown("Adjust broad market sector weights. **These targets will be saved for Step 2.**")
@@ -365,7 +369,6 @@ def run_sector_rebalancer():
 
     tab1, tab2 = st.tabs(["📊 Sector Weights", "📝 Data"])
     with tab1:
-        # --- FIXED: Max Height Buffer Calculation ---
         max_y = max(df_alloc["Benchmark"].max(), df_alloc["Custom"].max())
         
         fig = go.Figure()
@@ -379,13 +382,12 @@ def run_sector_rebalancer():
             name="Rebalanced", marker_color="#4F8BF9",
             text=df_alloc["Custom"], texttemplate='%{text:.1%}', textposition='outside'
         ))
-        # Applied Buffer logic here
         fig.update_layout(
             barmode='group', 
             height=400, 
             yaxis=dict(
                 tickformat='.0%', 
-                range=[0, max_y * 1.1] # 10% Buffer
+                range=[0, max_y * 1.1] # Buffer
             )
         )
         st.plotly_chart(fig, use_container_width=True)
@@ -436,7 +438,7 @@ def run_stock_optimizer():
             "Sector": st.column_config.TextColumn("Sector", width="medium"),
             "Macro Cap": st.column_config.NumberColumn(
                 "Macro Cap", 
-                format="%.2f%%", 
+                format="%.0f%%", # UPDATED: Integer percentages
                 disabled=True
             )
         }
@@ -472,7 +474,6 @@ def run_stock_optimizer():
 
         st.divider()
         st.subheader("1. Asset Selection Matrix")
-        # Passing original dataframe to avoid contamination
         fig_quad = plot_quadrant_chart(df_res, metric_col, "RSI", weight_col="Weight")
         st.plotly_chart(fig_quad, use_container_width=True)
 
