@@ -190,10 +190,6 @@ def process_bulk_data(tickers, sector_map, mode, period="5y"):
     return final_df, hist_data, cov_matrix
 
 def optimize_portfolio(df, objective_type, max_weight_per_asset, mode, sector_limits=None, cov_matrix=None):
-    """
-    Hybrid Optimizer: GLOP for Gain/Linear, Scipy SLSQP for Quadratic Volatility
-    Includes STRICT adherence to sector_limits if provided.
-    """
     if df is None or df.empty: return pd.DataFrame()
 
     metric_col = "PEG" if "P/E/G" in mode else "PE"
@@ -212,10 +208,8 @@ def optimize_portfolio(df, objective_type, max_weight_per_asset, mode, sector_li
         
         constraints = [{'type': 'eq', 'fun': lambda x: np.sum(x) - 1}]
         
-        # Quality Floor Constraint
         constraints.append({'type': 'ineq', 'fun': lambda x: np.dot(x, scores.values) - avg_score})
         
-        # Sector Constraints (STRICT)
         if sector_limits:
             sector_map_indices = {}
             for i, row in df.iterrows():
@@ -227,11 +221,15 @@ def optimize_portfolio(df, objective_type, max_weight_per_asset, mode, sector_li
                 if sec in sector_map_indices:
                     indices = sector_map_indices[sec]
                     def make_constraint(idx_list, limit_val):
-                        # sum(sector_weights) <= limit
-                        return lambda x: limit_val - np.sum(x[idx_list])
-                    constraints.append({'type': 'ineq', 'fun': make_constraint(indices, limit)})
+                        # STRICT EQUALITY FOR TECH
+                        if sec == "Information Technology":
+                            return lambda x: np.sum(x[idx_list]) - limit_val # == 0
+                        else:
+                            return lambda x: limit_val - np.sum(x[idx_list]) # >= 0
+                    
+                    c_type = 'eq' if sec == "Information Technology" else 'ineq'
+                    constraints.append({'type': c_type, 'fun': make_constraint(indices, limit)})
         
-        # Bounds: Each asset 0 to max_weight
         bounds = tuple((0, max_weight_per_asset) for _ in range(num_assets))
         init_guess = np.array(num_assets * [1. / num_assets,])
         
@@ -245,7 +243,7 @@ def optimize_portfolio(df, objective_type, max_weight_per_asset, mode, sector_li
                     results.append(row)
                 return pd.DataFrame(results)
         except:
-            pass # Fallback to linear
+            pass 
 
     # ==========================================
     # CASE 2: MAXIMIZE GAIN (LINEAR)
@@ -268,9 +266,13 @@ def optimize_portfolio(df, objective_type, max_weight_per_asset, mode, sector_li
         for sec, indices in sector_groups.items():
             if sec in sector_limits:
                 limit = sector_limits[sec]
-                # STRICT CONSTRAINT: Sum(Sector) <= Limit
-                # This overrides individual max weights if they sum to > limit
-                c_sec = solver.Constraint(0.0, limit)
+                # STRICT EQUALITY FOR TECH (Must equal limit)
+                # OTHERS: Inequality (Must be <= limit)
+                if sec == "Information Technology":
+                    c_sec = solver.Constraint(limit, limit) 
+                else:
+                    c_sec = solver.Constraint(0.0, limit)
+                
                 for idx in indices:
                     c_sec.SetCoefficient(weights[idx], 1)
 
@@ -279,7 +281,6 @@ def optimize_portfolio(df, objective_type, max_weight_per_asset, mode, sector_li
         for i, w in enumerate(weights): objective.SetCoefficient(w, scores.iloc[i])
         objective.SetMaximization()
     else:
-        # Fallback linear volatility minimization with Quality Floor
         c_qual = solver.Constraint(avg_score, solver.infinity())
         for i, w in enumerate(weights): c_qual.SetCoefficient(w, scores.iloc[i])
         for i, w in enumerate(weights): objective.SetCoefficient(w, df['Volatility'].iloc[i])
@@ -321,7 +322,7 @@ def run_sector_rebalancer():
         else: new_alloc[sec] = w * scale
     
     st.session_state["sector_targets"] = new_alloc
-    st.success(f"✅ Sector targets saved! Tech constrained to {tech_cap}%. Go to 'Step 2' to apply them.")
+    st.success(f"✅ Sector targets saved! Tech fixed at {tech_cap}%. Go to 'Step 2' to apply them.")
 
     df_alloc = pd.DataFrame([{"Sector": k, "Benchmark": v, "Custom": new_alloc[k]} for k, v in BENCHMARK_SECTOR_DATA.items()])
     df_alloc["Delta"] = df_alloc["Custom"] - df_alloc["Benchmark"]
@@ -365,7 +366,7 @@ def run_stock_optimizer():
             use_sector_limits = st.checkbox("Apply Sector Limits from Step 1?", value=True)
             if use_sector_limits:
                 tech_lim = st.session_state['sector_targets'].get('Information Technology',0)
-                st.caption(f"Constraints active (e.g. Tech ≤ {tech_lim:.1%})")
+                st.caption(f"Constraints active (Tech = {tech_lim:.1%})")
             st.divider()
 
         max_w = st.slider("Max Weight (Individual)", 0.05, 1.0, 0.25, 0.05)
