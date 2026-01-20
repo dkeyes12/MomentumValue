@@ -35,6 +35,21 @@ BENCHMARK_SECTOR_DATA = {
     "Materials": 0.020
 }
 
+# Mapping for Step 1 Table
+SECTOR_TICKER_MAP = {
+    "Information Technology": "XLK",
+    "Health Care": "XLV",
+    "Financials": "XLF",
+    "Real Estate": "XLRE",
+    "Energy": "XLE",
+    "Materials": "XLB",
+    "Consumer Discretionary": "XLY",
+    "Consumer Staples": "XLP",
+    "Industrials": "XLI",
+    "Utilities": "XLU",
+    "Communication Services": "XLC"
+}
+
 DEFAULT_TICKERS = [
     {"Ticker": "XLK", "Sector": "Information Technology"},
     {"Ticker": "XLV", "Sector": "Health Care"},
@@ -223,7 +238,7 @@ def optimize_portfolio(df, objective_type, max_weight_per_asset, mode, sector_li
                     def make_constraint(idx_list, limit_val):
                         # STRICT EQUALITY FOR TECH
                         if sec == "Information Technology":
-                            return lambda x: np.sum(x[idx_list]) - limit_val # == 0
+                            return lambda x: np.sum(x[idx_list]) - limit_val # == 0 (Approx, SLSQP handles equality)
                         else:
                             return lambda x: limit_val - np.sum(x[idx_list]) # >= 0
                     
@@ -266,8 +281,7 @@ def optimize_portfolio(df, objective_type, max_weight_per_asset, mode, sector_li
         for sec, indices in sector_groups.items():
             if sec in sector_limits:
                 limit = sector_limits[sec]
-                # STRICT EQUALITY FOR TECH (Must equal limit)
-                # OTHERS: Inequality (Must be <= limit)
+                # STRICT EQUALITY FOR TECH
                 if sec == "Information Technology":
                     c_sec = solver.Constraint(limit, limit) 
                 else:
@@ -324,7 +338,15 @@ def run_sector_rebalancer():
     st.session_state["sector_targets"] = new_alloc
     st.success(f"✅ Sector targets saved! Tech fixed at {tech_cap}%. Go to 'Step 2' to apply them.")
 
-    df_alloc = pd.DataFrame([{"Sector": k, "Benchmark": v, "Custom": new_alloc[k]} for k, v in BENCHMARK_SECTOR_DATA.items()])
+    df_alloc = pd.DataFrame([
+        {
+            "Sector": k, 
+            "Ticker": SECTOR_TICKER_MAP.get(k, "-"), # ADDED TICKER COLUMN
+            "Benchmark": v, 
+            "Custom": new_alloc[k]
+        } 
+        for k, v in BENCHMARK_SECTOR_DATA.items()
+    ])
     df_alloc["Delta"] = df_alloc["Custom"] - df_alloc["Benchmark"]
     
     with col_metrics:
@@ -347,6 +369,7 @@ def run_sector_rebalancer():
                 "Custom": "{:.1%}", 
                 "Delta": "{:+.1%}"
             }), 
+            column_order=["Sector", "Ticker", "Benchmark", "Custom", "Delta"], # Explicit order
             use_container_width=True
         )
 
