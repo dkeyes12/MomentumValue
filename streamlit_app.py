@@ -20,11 +20,19 @@ except ImportError:
 st.set_page_config(page_title="MomentumValue Unified Dashboard", layout="wide")
 
 # --- SHARED DATASETS ---
+# Updated Jan 2026 approximate weights
 BENCHMARK_SECTOR_DATA = {
-    "Information Technology": 0.315, "Financials": 0.132, "Health Care": 0.124,
-    "Consumer Discretionary": 0.103, "Communication Services": 0.088, "Industrials": 0.085,
-    "Consumer Staples": 0.061, "Energy": 0.038, "Utilities": 0.024,
-    "Real Estate": 0.023, "Materials": 0.022
+    "Information Technology": 0.350,  # Updated to ~35% based on current market data
+    "Financials": 0.130, 
+    "Health Care": 0.120,
+    "Consumer Discretionary": 0.100, 
+    "Communication Services": 0.090, 
+    "Industrials": 0.080,
+    "Consumer Staples": 0.060, 
+    "Energy": 0.035, 
+    "Utilities": 0.020,
+    "Real Estate": 0.020, 
+    "Materials": 0.020
 }
 
 # --- UPDATED: S&P 500 SECTOR UNIVERSE ---
@@ -51,13 +59,13 @@ def calculate_rsi(series, window=14):
     rs = gain / loss
     return 100 - (100 / (1 + rs))
 
-@st.cache_data(ttl=3600) # Cache for 1 hour to avoid spamming API
-def get_live_tech_weight(base_weight=0.315):
+@st.cache_data(ttl=3600) 
+def get_live_tech_weight(base_weight=0.350):
     """
     Estimates live Tech weight based on XLK vs SPY relative performance.
     """
     try:
-        # Fetch today's data
+        # Fetch today's data to adjust the static base weight
         tickers = yf.tickers.Tickers("XLK SPY")
         hist = tickers.history(period="1d")
         
@@ -67,10 +75,9 @@ def get_live_tech_weight(base_weight=0.315):
             spy_ret = (hist["Close"]["SPY"].iloc[-1] - hist["Open"]["SPY"].iloc[0]) / hist["Open"]["SPY"].iloc[0]
             
             # Adjust base weight by relative performance
-            # If Tech is up 2% and SPY is flat, Tech weight increases.
             relative_perf = (1 + xlk_ret) / (1 + spy_ret)
             estimated_weight = base_weight * relative_perf
-            return estimated_weight * 100 # Return as percentage (e.g. 31.7)
+            return estimated_weight * 100 
     except Exception:
         pass
     return base_weight * 100
@@ -239,19 +246,17 @@ def optimize_portfolio(df, objective_type, max_weight_per_asset, mode, sector_li
 def run_sector_rebalancer():
     st.header("Step 1: Rebalance Technology")
     
-    # --- HEADER: Live Tech Weight ---
+    # --- DYNAMIC HEADER ---
     live_weight = get_live_tech_weight()
     today_str = datetime.today().strftime('%Y-%m-%d')
-    st.info(f"📅 **Today, {today_str}, Technology makes up ~{live_weight:.1f}% of the S&P 500.**")
+    st.info(f"📅 Today, {today_str}, technology makes up {live_weight:.1f}% of the S&P500. Historically technology has been 15%.")
     
     st.markdown("Adjust broad market sector weights. **These targets will be saved for Step 2.**")
     
-    # Use live weight as default for slider if reasonable, else benchmark
-    default_val = live_weight if 10 < live_weight < 50 else BENCHMARK_SECTOR_DATA["Information Technology"] * 100
-    
     col_slide, col_metrics = st.columns([1, 2])
     with col_slide:
-        tech_cap = st.slider("Max Tech Exposure (%)", 0.0, 60.0, float(default_val), 0.5)
+        # Default set to 15.0% as requested
+        tech_cap = st.slider("Max Tech Exposure (%)", 0.0, 60.0, 15.0, 0.5)
         
     target_tech = tech_cap / 100.0
     rem_weight_new = 1.0 - target_tech
