@@ -366,7 +366,7 @@ def run_sector_rebalancer():
         else: new_alloc[sec] = w * scale
     
     st.session_state["sector_targets"] = new_alloc
-    st.success(f"✅ Sector targets saved! Tech fixed at {tech_cap}%. Go to 'Step 2' to apply them.")
+    st.success(f"✅ Sector targets saved! Tech fixed at {tech_cap}%. Go to 'Step 2' to optimize them.")
 
     df_alloc = pd.DataFrame([
         {
