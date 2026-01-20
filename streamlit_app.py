@@ -332,8 +332,8 @@ def run_sector_rebalancer():
     st.header("Step 1: Rebalance Technology")
     
     live_weight = get_live_tech_weight()
-    today_str = datetime.today().strftime('%Y-%m-%d')
-    st.info(f"📅 Today, {today_str}, technology makes up {live_weight:.1f}% of the S&P500 (vs. Historical average: 15%).")
+    today_str = datetime.today().strftime('%m/%d/%Y')
+    st.info(f"📅 Today, {today_str}, technology makes up {live_weight:.1f}% of the S&P500 (vs. Historical average: 15%). Benefit is normalizing the weighting of technology to a weighting of your choosing; higher to increase exposure or lower to decrease exposure.")
     
     st.markdown("Adjust broad market sector weights. **These targets will be saved for Step 2.**")
     
