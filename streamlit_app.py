@@ -88,8 +88,14 @@ def get_live_tech_weight(base_weight=0.350):
         pass
     return base_weight * 100
 
-def plot_quadrant_chart(df, metric_col, rsi_col, weight_col=None, title="Asset Selection Matrix"):
-    if df.empty: return go.Figure()
+def plot_quadrant_chart(df_in, metric_col, rsi_col, weight_col=None, title="Asset Selection Matrix"):
+    """
+    Plots the 2x2 Matrix using a COPY of the dataframe to prevent side effects (e.g. Is_Selected column leaking).
+    """
+    if df_in.empty: return go.Figure()
+    
+    # --- CRITICAL FIX: Work on a copy ---
+    df = df_in.copy()
 
     data_median = df[metric_col].median()
     if pd.isna(data_median) or data_median > 5.0: 
@@ -238,7 +244,7 @@ def optimize_portfolio(df, objective_type, max_weight_per_asset, mode, sector_li
                     def make_constraint(idx_list, limit_val):
                         # STRICT EQUALITY FOR TECH
                         if sec == "Information Technology":
-                            return lambda x: np.sum(x[idx_list]) - limit_val # == 0 (Approx, SLSQP handles equality)
+                            return lambda x: np.sum(x[idx_list]) - limit_val # == 0
                         else:
                             return lambda x: limit_val - np.sum(x[idx_list]) # >= 0
                     
@@ -316,7 +322,7 @@ def run_sector_rebalancer():
     st.header("Step 1: Rebalance Technology")
     
     live_weight = get_live_tech_weight()
-    today_str = datetime.today().strftime('%Y-%m-%d')
+    today_str = datetime.today().strftime('%d-%m-%Y')
     st.info(f"📅 Today, {today_str}, technology makes up {live_weight:.1f}% of the S&P500. Historically technology has been 15%.")
     
     st.markdown("Adjust broad market sector weights. **These targets will be saved for Step 2.**")
@@ -341,7 +347,7 @@ def run_sector_rebalancer():
     df_alloc = pd.DataFrame([
         {
             "Sector": k, 
-            "Ticker": SECTOR_TICKER_MAP.get(k, "-"), # ADDED TICKER COLUMN
+            "Ticker": SECTOR_TICKER_MAP.get(k, "-"), 
             "Benchmark": v, 
             "Custom": new_alloc[k]
         } 
@@ -369,7 +375,7 @@ def run_sector_rebalancer():
                 "Custom": "{:.1%}", 
                 "Delta": "{:+.1%}"
             }), 
-            column_order=["Sector", "Ticker", "Benchmark", "Custom", "Delta"], # Explicit order
+            column_order=["Sector", "Ticker", "Benchmark", "Custom", "Delta"],
             use_container_width=True
         )
 
