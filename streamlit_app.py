@@ -333,7 +333,6 @@ def run_sector_rebalancer():
     live_weight = get_live_tech_weight()
     today_str = datetime.today().strftime('%m/%d/%Y')
     
-    # --- CUSTOM CENTERED INFO BOX ---
     st.markdown(f"""
         <div style="
             background-color: #e6f3ff; 
@@ -463,6 +462,7 @@ def run_stock_optimizer():
             )
         }
         
+        st.caption("Edit Tickers Below:")
         edited = st.data_editor(
             display_df, 
             column_config=column_cfg,
@@ -472,10 +472,18 @@ def run_stock_optimizer():
         )
         
         if st.button("🚀 Optimize Portfolio", type="primary"):
+            # --- FIX: Clear previous results to force UI update ---
+            if "opt_res" in st.session_state:
+                del st.session_state["opt_res"]
+                
             with st.spinner("Fetching data..."):
                 t_list = edited["Ticker"].tolist()
                 s_map = dict(zip(edited["Ticker"], edited["Sector"]))
                 df_mkt, hist, cov = process_bulk_data(t_list, s_map, mode_sel)
+                
+                # --- FIX: Ensure we work on a fresh copy ---
+                if df_mkt is not None:
+                    df_mkt = df_mkt.copy()
                 
                 if df_mkt is not None and not df_mkt.empty:
                     limits = st.session_state["sector_targets"] if use_sector_limits else None
@@ -484,6 +492,7 @@ def run_stock_optimizer():
                     st.session_state["opt_res"] = df_res
                     st.session_state["mkt_data"] = df_mkt
                     st.session_state["hist_data"] = hist
+                    st.session_state["last_run"] = datetime.now().strftime("%H:%M:%S")
                 else:
                     st.error("Data fetch failed or returned empty universe.")
 
@@ -498,7 +507,7 @@ def run_stock_optimizer():
         fig_quad = plot_quadrant_chart(df_res, metric_col, "RSI", weight_col="Weight")
         st.plotly_chart(fig_quad, use_container_width=True)
 
-        st.subheader("2. Optimal Allocation")
+        st.subheader(f"2. Optimal Allocation (Updated: {st.session_state.get('last_run','')})")
         col_tbl, col_tv = st.columns([2, 1])
         with col_tbl:
             disp = df_res[df_res["Weight"] > 0.001].sort_values("Weight", ascending=False).copy()
