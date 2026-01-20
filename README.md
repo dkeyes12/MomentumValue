@@ -42,14 +42,14 @@ A sophisticated multi-page Streamlit application that combines **value investing
 
 4. **Run the application**
    ```bash
-   streamlit run streamlit_app.py
+   streamlit run app.py
    ```
 
 5. **Open your browser** to `http://localhost:8501`
 
 ## 📊 Application Structure
 
-### 🏠 Main Dashboard (`streamlit_app.py`)
+### 🏠 Main Dashboard (`app.py`)
 - **ETF Mode**: Optimize S&P 500 sector ETF portfolios using P/E ratios and RSI momentum
 - **Stock Mode**: Advanced optimization using PEG (Price/Earnings to Growth) ratios for growth-adjusted valuation
 - **Linear Programming**: Maximizes returns while respecting constraints using OR-Tools GLOP solver

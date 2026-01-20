@@ -4,7 +4,7 @@ import numpy as np
 from unittest.mock import patch, MagicMock
 
 # Import functions from main app
-from streamlit_app import (
+from app import (
     calculate_rsi,
     process_bulk_data,
     optimize_portfolio,
