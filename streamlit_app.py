@@ -343,7 +343,7 @@ def run_sector_rebalancer():
             color: #0068c9; 
             font-family: sans-serif;
             margin-bottom: 20px;">
-            <strong style='font-size: 1.1em;'>📅 Today, {today_str}, technology makes up {live_weight:.1f}% of the S&P500 (vs. Historical average: 15%).</strong>
+            <strong style='font-size: 1.1em;'>📅 Today, {today_str}, Technology makes up {live_weight:.1f}% of the S&P500 (vs. Historical average: 15%).</strong>
             <br>
             <span style='font-size: 0.95em;'>By normalizing your portfolio's technology weighting, you can free up cash to invest elsewhere -- to other undervalued sectors.</span>
         </div>
