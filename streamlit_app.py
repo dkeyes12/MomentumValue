@@ -328,7 +328,7 @@ def run_sector_rebalancer():
     st.header("Step 1: Rebalance Technology")
     
     live_weight = get_live_tech_weight()
-    today_str = datetime.today().strftime('%m/%d/%Y')
+    today_str = datetime.today().strftime('%Y-%m-%d')
     st.info(f"📅 Today, {today_str}, technology makes up {live_weight:.1f}% of the S&P500. Historically technology has been 15%.")
     
     st.markdown("Adjust broad market sector weights. **These targets will be saved for Step 2.**")
@@ -370,8 +370,17 @@ def run_sector_rebalancer():
     tab1, tab2 = st.tabs(["📊 Sector Weights", "📝 Data"])
     with tab1:
         fig = go.Figure()
-        fig.add_trace(go.Bar(x=df_alloc["Sector"], y=df_alloc["Benchmark"], name="Benchmark", marker_color="lightgray"))
-        fig.add_trace(go.Bar(x=df_alloc["Sector"], y=df_alloc["Custom"], name="Rebalanced", marker_color="#4F8BF9"))
+        # --- UPDATE: Added Text Labels ---
+        fig.add_trace(go.Bar(
+            x=df_alloc["Sector"], y=df_alloc["Benchmark"], 
+            name="Benchmark", marker_color="lightgray",
+            text=df_alloc["Benchmark"], texttemplate='%{text:.1%}', textposition='outside'
+        ))
+        fig.add_trace(go.Bar(
+            x=df_alloc["Sector"], y=df_alloc["Custom"], 
+            name="Rebalanced", marker_color="#4F8BF9",
+            text=df_alloc["Custom"], texttemplate='%{text:.1%}', textposition='outside'
+        ))
         fig.update_layout(barmode='group', height=400, yaxis_tickformat='.0%')
         st.plotly_chart(fig, use_container_width=True)
     with tab2:
@@ -457,6 +466,7 @@ def run_stock_optimizer():
 
         st.divider()
         st.subheader("1. Asset Selection Matrix")
+        # Passing original dataframe to avoid contamination
         fig_quad = plot_quadrant_chart(df_res, metric_col, "RSI", weight_col="Weight")
         st.plotly_chart(fig_quad, use_container_width=True)
 
@@ -484,7 +494,6 @@ def run_stock_optimizer():
                 use_container_width=True
             )
             
-            # --- ADDED BACK: Strategy Breakdown ---
             with st.expander("📊 Strategy Breakdown: Allocation Methodology"):
                 st.markdown("""
                 This model employs a multi-factor approach, optimizing for **Earnings Yield** (Value) and **Relative Strength** (Momentum).
@@ -526,7 +535,6 @@ def run_stock_optimizer():
             except Exception as e:
                 st.error(f"Backtest Error: {e}")
 
-        # --- ADDED BACK: Logic Summary ---
         st.divider()
         with st.expander("ℹ️ How the Optimization Logic Works"):
             st.markdown(r"""
