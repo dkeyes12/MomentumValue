@@ -20,9 +20,8 @@ except ImportError:
 st.set_page_config(page_title="MomentumValue Unified Dashboard", layout="wide")
 
 # --- SHARED DATASETS ---
-# Updated Jan 2026 approximate weights
 BENCHMARK_SECTOR_DATA = {
-    "Information Technology": 0.350,  # Updated to ~35% based on current market data
+    "Information Technology": 0.350, 
     "Financials": 0.130, 
     "Health Care": 0.120,
     "Consumer Discretionary": 0.100, 
@@ -61,20 +60,12 @@ def calculate_rsi(series, window=14):
 
 @st.cache_data(ttl=3600) 
 def get_live_tech_weight(base_weight=0.350):
-    """
-    Estimates live Tech weight based on XLK vs SPY relative performance.
-    """
     try:
-        # Fetch today's data to adjust the static base weight
         tickers = yf.tickers.Tickers("XLK SPY")
         hist = tickers.history(period="1d")
-        
         if not hist.empty and "Close" in hist.columns:
-            # Calculate daily return for Tech (XLK) vs Market (SPY)
             xlk_ret = (hist["Close"]["XLK"].iloc[-1] - hist["Open"]["XLK"].iloc[0]) / hist["Open"]["XLK"].iloc[0]
             spy_ret = (hist["Close"]["SPY"].iloc[-1] - hist["Open"]["SPY"].iloc[0]) / hist["Open"]["SPY"].iloc[0]
-            
-            # Adjust base weight by relative performance
             relative_perf = (1 + xlk_ret) / (1 + spy_ret)
             estimated_weight = base_weight * relative_perf
             return estimated_weight * 100 
@@ -85,6 +76,8 @@ def get_live_tech_weight(base_weight=0.350):
 def plot_quadrant_chart(df, metric_col, rsi_col, weight_col=None, title="Asset Selection Matrix"):
     """
     Plots the 2x2 Matrix.
+    - Uniform point size (Weighting removed from visual size).
+    - Color highlights selected assets vs unselected grey ghosts.
     """
     if df.empty: return go.Figure()
 
@@ -100,39 +93,47 @@ def plot_quadrant_chart(df, metric_col, rsi_col, weight_col=None, title="Asset S
     
     fig = go.Figure()
 
+    # Determine Selection Status
     if weight_col and weight_col in df.columns:
         df['Is_Selected'] = df[weight_col] > 0.0001
-        df['Bubble_Size'] = df.apply(lambda r: r[weight_col] * 300 if r['Is_Selected'] else 10, axis=1)
     else:
         df['Is_Selected'] = True
-        df['Bubble_Size'] = 15
 
-    # Trace 1: Unselected
+    # --- TRACE 1: UNSELECTED (GREY GHOSTS) ---
     df_unselected = df[~df['Is_Selected']]
     if not df_unselected.empty:
         fig.add_trace(go.Scatter(
             x=df_unselected[metric_col].clip(upper=MAX_X), y=df_unselected[rsi_col],
             mode='markers+text', text=df_unselected['Ticker'], textposition="top center",
-            marker=dict(size=8, color='#E0E0E0', line=dict(width=1, color='#A0A0A0')),
+            marker=dict(
+                size=12,          # FIXED SIZE
+                color='#E0E0E0',  # Light Grey
+                line=dict(width=1, color='#A0A0A0')
+            ),
             hovertemplate="<b>%{text}</b><br>RSI: %{y:.1f}<br>Valuation: %{x:.2f}<br>Status: Not Selected<extra></extra>",
             name="Unselected"
         ))
 
-    # Trace 2: Selected
+    # --- TRACE 2: SELECTED (COLORED) ---
     df_selected = df[df['Is_Selected']]
     if not df_selected.empty:
         fig.add_trace(go.Scatter(
             x=df_selected[metric_col].clip(upper=MAX_X), y=df_selected[rsi_col],
             mode='markers+text', text=df_selected['Ticker'], textposition="top center",
             marker=dict(
-                size=df_selected['Bubble_Size'],
-                color=df_selected[rsi_col], colorscale='RdYlGn_r', showscale=True, 
-                colorbar=dict(title="RSI (Red=High)"), line=dict(width=1, color='DarkSlateGrey')
+                size=12,          # FIXED SIZE
+                color=df_selected[rsi_col], 
+                colorscale='RdYlGn_r', # Green(Min) -> Red(Max)
+                showscale=True, 
+                colorbar=dict(title="RSI (Red=High)"), 
+                line=dict(width=1, color='DarkSlateGrey')
             ),
-            hovertemplate="<b>%{text}</b><br>RSI: %{y:.1f}<br>Valuation: %{x:.2f}<br>Weight: %{marker.size:.2f}%<extra></extra>",
+            hovertemplate="<b>%{text}</b><br>RSI: %{y:.1f}<br>Valuation: %{x:.2f}<br>Weight: %{customdata[0]:.2%}<extra></extra>",
+            customdata=df_selected[[weight_col]] if weight_col in df_selected.columns else np.zeros((len(df_selected), 1)),
             name="Selected"
         ))
 
+    # Background Quadrants
     fig.add_shape(type="rect", x0=0, y0=50, x1=VAL_THRESHOLD, y1=100, fillcolor="green", opacity=0.1, layer="below", line_width=0)
     fig.add_shape(type="rect", x0=VAL_THRESHOLD, y0=50, x1=MAX_X, y1=100, fillcolor="orange", opacity=0.1, layer="below", line_width=0)
     fig.add_shape(type="rect", x0=0, y0=0, x1=VAL_THRESHOLD, y1=50, fillcolor="yellow", opacity=0.1, layer="below", line_width=0)
@@ -246,7 +247,6 @@ def optimize_portfolio(df, objective_type, max_weight_per_asset, mode, sector_li
 def run_sector_rebalancer():
     st.header("Step 1: Rebalance Technology")
     
-    # --- DYNAMIC HEADER ---
     live_weight = get_live_tech_weight()
     today_str = datetime.today().strftime('%Y-%m-%d')
     st.info(f"📅 Today, {today_str}, technology makes up {live_weight:.1f}% of the S&P500. Historically technology has been 15%.")
@@ -255,7 +255,6 @@ def run_sector_rebalancer():
     
     col_slide, col_metrics = st.columns([1, 2])
     with col_slide:
-        # Default set to 15.0% as requested
         tech_cap = st.slider("Max Tech Exposure (%)", 0.0, 60.0, 15.0, 0.5)
         
     target_tech = tech_cap / 100.0
