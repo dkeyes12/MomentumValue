@@ -346,7 +346,8 @@ def run_sector_rebalancer():
             <strong style='font-size: 1.1em;'>📅 Today, {today_str}, Technology makes up {live_weight:.1f}% of the S&P500 (vs. Historical average: 15%).</strong>
             <br>
             <span style='font-size: 0.95em;'>By normalizing your portfolio's technology weighting, you can free up cash to invest elsewhere -- to other undervalued sectors.</span>
-             <span style='font-size: 0.95em;'>Post normaliizing Technology, redistribute your funds to the other S&P 500 Funds. </span>
+            <br>
+             <span style='font-size: 0.95em;'>Use slider bar to normalize Technology and view bar chart to view and adjust redistribution to other sectors belonging to the S&P 500. </span>
         </div>
     """, unsafe_allow_html=True)
     
