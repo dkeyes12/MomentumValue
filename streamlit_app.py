@@ -347,7 +347,7 @@ def run_sector_rebalancer():
             <br>
             <span style='font-size: 0.95em;'>By normalizing your portfolio's technology weighting, you can free up cash to invest elsewhere -- to other undervalued sectors.</span>
             <br>
-             <span style='font-size: 0.95em;'>Use slider bar to normalize Technology. View scenario of your funds redistributed to other S&P500 sectors in Sector Weights. </span>
+             <span style='font-size: 0.95em;'>Use slider bar to re-baseline Technology. View scenario of your funds redistributed to other S&P500 sectors in Sector Weights. </span>
         </div>
     """, unsafe_allow_html=True)
     
