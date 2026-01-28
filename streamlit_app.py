@@ -9,12 +9,17 @@ from plotly.subplots import make_subplots
 import time
 from datetime import datetime
 
-# --- SKFOLIO IMPORTS ---
+# --- SKFOLIO IMPORTS (SAFE MODE) ---
+# Updated to catch TypeErrors/SyntaxErrors caused by Python 3.13+ incompatibilities
+SKFOLIO_AVAILABLE = False
 try:
     from skfolio import Portfolio, Population
     from skfolio.preprocessing import prices_to_returns
     SKFOLIO_AVAILABLE = True
-except ImportError:
+except Exception as e:
+    # Captures ImportError, TypeError, AttributeError, etc.
+    # Keeps the app running even if skfolio is broken in the environment.
+    print(f"⚠️ Skfolio could not be loaded: {e}. Backtesting feature will be disabled.")
     SKFOLIO_AVAILABLE = False
 
 # --- CONFIGURATION ---
@@ -333,6 +338,7 @@ def run_sector_rebalancer():
     live_weight = get_live_tech_weight()
     today_str = datetime.today().strftime('%m/%d/%Y')
     
+    # --- CUSTOM CENTERED INFO BOX ---
     st.markdown(f"""
         <div style="
             background-color: #e6f3ff; 
@@ -343,11 +349,9 @@ def run_sector_rebalancer():
             color: #0068c9; 
             font-family: sans-serif;
             margin-bottom: 20px;">
-            <strong style='font-size: 1.1em;'>📅 Today, {today_str}, Technology makes up {live_weight:.1f}% of the S&P500 (vs. Historical average: 15%).</strong>
+            <strong style='font-size: 1.1em;'>📅 Today, {today_str}, technology makes up {live_weight:.1f}% of the S&P500 (vs. Historical average: 15%).</strong>
             <br>
-            <span style='font-size: 0.95em;'>By normalizing your portfolio's technology weighting, you can free up cash to invest elsewhere -- to other undervalued sectors.</span>
-            <br>
-             <span style='font-size: 0.95em;'>Use slider bar to re-baseline Technology. View scenario of your funds redistributed to other S&P500 sectors in Sector Weights. </span>
+            <span style='font-size: 0.95em;'>Benefit is normalizing the weighting of technology to a weighting of your choosing; higher to increase exposure or lower to decrease exposure.</span>
         </div>
     """, unsafe_allow_html=True)
     
@@ -368,7 +372,7 @@ def run_sector_rebalancer():
         else: new_alloc[sec] = w * scale
     
     st.session_state["sector_targets"] = new_alloc
-    st.success(f"✅ Sector targets saved! Tech fixed at {tech_cap}%. Go to 'Step 2' to optimize them.")
+    st.success(f"✅ Sector targets saved! Tech fixed at {tech_cap}%. Go to 'Step 2' to apply them.")
 
     df_alloc = pd.DataFrame([
         {
@@ -474,7 +478,6 @@ def run_stock_optimizer():
         )
         
         if st.button("🚀 Optimize Portfolio", type="primary"):
-            # --- FIX: Clear previous results to force UI update ---
             if "opt_res" in st.session_state:
                 del st.session_state["opt_res"]
                 
@@ -483,7 +486,6 @@ def run_stock_optimizer():
                 s_map = dict(zip(edited["Ticker"], edited["Sector"]))
                 df_mkt, hist, cov = process_bulk_data(t_list, s_map, mode_sel)
                 
-                # --- FIX: Ensure we work on a fresh copy ---
                 if df_mkt is not None:
                     df_mkt = df_mkt.copy()
                 
