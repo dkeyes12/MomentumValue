@@ -1,9 +1,10 @@
 streamlit
-yfinance
-pandas
-numpy 
-ortools
-plotly
-matplotlib
-scikit-learn
-skfolio
+yfinance>=0.2.40
+pandas>=2.0.0
+numpy>=1.24.0
+plotly>=5.15.0
+ortools>=9.6
+scipy>=1.10.0
+# Pinned versions known to work together
+skfolio==0.1.3
+cvxpy>=1.4.2,<1.6.0
