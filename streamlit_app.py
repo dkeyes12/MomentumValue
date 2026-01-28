@@ -10,15 +10,12 @@ import time
 from datetime import datetime
 
 # --- SKFOLIO IMPORTS (SAFE MODE) ---
-# Updated to catch TypeErrors/SyntaxErrors caused by Python 3.13+ incompatibilities
 SKFOLIO_AVAILABLE = False
 try:
     from skfolio import Portfolio, Population
     from skfolio.preprocessing import prices_to_returns
     SKFOLIO_AVAILABLE = True
 except Exception as e:
-    # Captures ImportError, TypeError, AttributeError, etc.
-    # Keeps the app running even if skfolio is broken in the environment.
     print(f"⚠️ Skfolio could not be loaded: {e}. Backtesting feature will be disabled.")
     SKFOLIO_AVAILABLE = False
 
@@ -76,17 +73,45 @@ def calculate_rsi(series, window=14):
 
 @st.cache_data(ttl=3600) 
 def get_live_tech_weight(base_weight=0.350):
+    """
+    Fetches live relative performance of Tech (XLK) vs SP500 (SPY).
+    Uses 5-day history + Forward Fill to ensure valid data is returned (Last Week's % fallback).
+    """
     try:
-        tickers = yf.tickers.Tickers("XLK SPY")
-        hist = tickers.history(period="1d")
-        if not hist.empty and "Close" in hist.columns:
-            xlk_ret = (hist["Close"]["XLK"].iloc[-1] - hist["Open"]["XLK"].iloc[0]) / hist["Open"]["XLK"].iloc[0]
-            spy_ret = (hist["Close"]["SPY"].iloc[-1] - hist["Open"]["SPY"].iloc[0]) / hist["Open"]["SPY"].iloc[0]
-            relative_perf = (1 + xlk_ret) / (1 + spy_ret)
-            estimated_weight = base_weight * relative_perf
-            return estimated_weight * 100 
+        # Fetch 5 days to ensure we have data even if today/yesterday are missing/holidays
+        data = yf.download("XLK SPY", period="5d", progress=False)
+        
+        # Forward fill missing data (propagates last valid price forward)
+        data = data.ffill()
+        
+        if not data.empty and "Close" in data.columns and "Open" in data.columns:
+            try:
+                # Use the last available row (which is now guaranteed to be non-NaN if any data exists)
+                xlk_close = data["Close"]["XLK"].iloc[-1]
+                xlk_open = data["Open"]["XLK"].iloc[-1]
+                spy_close = data["Close"]["SPY"].iloc[-1]
+                spy_open = data["Open"]["SPY"].iloc[-1]
+                
+                # Check for NaNs explicitly just in case ffill failed (empty fetch)
+                if pd.isna(xlk_close) or pd.isna(xlk_open):
+                    return base_weight * 100
+
+                if xlk_open > 0 and spy_open > 0:
+                    xlk_ret = (xlk_close - xlk_open) / xlk_open
+                    spy_ret = (spy_close - spy_open) / spy_open
+                    
+                    relative_perf = (1 + xlk_ret) / (1 + spy_ret)
+                    estimated_weight = base_weight * relative_perf * 100
+                    
+                    # Final safety check
+                    if not pd.isna(estimated_weight):
+                        return estimated_weight
+            except Exception:
+                pass
     except Exception:
         pass
+    
+    # Ultimate Fallback: Return the Benchmark Weight
     return base_weight * 100
 
 def plot_quadrant_chart(df_in, metric_col, rsi_col, weight_col=None, title="Asset Selection Matrix"):
