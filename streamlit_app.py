@@ -73,26 +73,17 @@ def calculate_rsi(series, window=14):
 
 @st.cache_data(ttl=3600) 
 def get_live_tech_weight(base_weight=0.350):
-    """
-    Fetches live relative performance of Tech (XLK) vs SP500 (SPY).
-    Uses 5-day history + Forward Fill to ensure valid data is returned (Last Week's % fallback).
-    """
     try:
-        # Fetch 5 days to ensure we have data even if today/yesterday are missing/holidays
         data = yf.download("XLK SPY", period="5d", progress=False)
-        
-        # Forward fill missing data (propagates last valid price forward)
         data = data.ffill()
         
         if not data.empty and "Close" in data.columns and "Open" in data.columns:
             try:
-                # Use the last available row (which is now guaranteed to be non-NaN if any data exists)
                 xlk_close = data["Close"]["XLK"].iloc[-1]
                 xlk_open = data["Open"]["XLK"].iloc[-1]
                 spy_close = data["Close"]["SPY"].iloc[-1]
                 spy_open = data["Open"]["SPY"].iloc[-1]
                 
-                # Check for NaNs explicitly just in case ffill failed (empty fetch)
                 if pd.isna(xlk_close) or pd.isna(xlk_open):
                     return base_weight * 100
 
@@ -103,7 +94,6 @@ def get_live_tech_weight(base_weight=0.350):
                     relative_perf = (1 + xlk_ret) / (1 + spy_ret)
                     estimated_weight = base_weight * relative_perf * 100
                     
-                    # Final safety check
                     if not pd.isna(estimated_weight):
                         return estimated_weight
             except Exception:
@@ -111,7 +101,6 @@ def get_live_tech_weight(base_weight=0.350):
     except Exception:
         pass
     
-    # Ultimate Fallback: Return the Benchmark Weight
     return base_weight * 100
 
 def plot_quadrant_chart(df_in, metric_col, rsi_col, weight_col=None, title="Asset Selection Matrix"):
@@ -121,14 +110,15 @@ def plot_quadrant_chart(df_in, metric_col, rsi_col, weight_col=None, title="Asse
     data_median = df[metric_col].median()
     if pd.isna(data_median): data_median = 20.0
     
+    # Dynamic Axis Scaling based on Metric
     if data_median > 5.0: 
         max_val = df[metric_col].max()
         safe_max = 60 if pd.isna(max_val) else max(60, max_val * 1.1)
         VAL_THRESHOLD = 25; MAX_X = safe_max
-        x_label = "P/E Ratio (Lower is Better)"
+        x_label = f"{metric_col} Ratio (Lower is Better)"
     else: 
         VAL_THRESHOLD = 1.5; MAX_X = 4.0
-        x_label = "PEG Ratio (Lower is Better)"
+        x_label = f"{metric_col} Ratio (Lower is Better)"
     
     fig = go.Figure()
 
@@ -162,6 +152,7 @@ def plot_quadrant_chart(df_in, metric_col, rsi_col, weight_col=None, title="Asse
             name="Selected"
         ))
 
+    # Add Quadrants
     fig.add_shape(type="rect", x0=0, y0=50, x1=VAL_THRESHOLD, y1=100, fillcolor="green", opacity=0.1, layer="below", line_width=0)
     fig.add_shape(type="rect", x0=VAL_THRESHOLD, y0=50, x1=MAX_X, y1=100, fillcolor="orange", opacity=0.1, layer="below", line_width=0)
     fig.add_shape(type="rect", x0=0, y0=0, x1=VAL_THRESHOLD, y1=50, fillcolor="yellow", opacity=0.1, layer="below", line_width=0)
@@ -195,8 +186,6 @@ def process_bulk_data(tickers, sector_map, mode, period="5y"):
             
             if df.empty: continue
             df = df.dropna(how='all')
-            df['SMA_50'] = df['Close'].rolling(window=50).mean()
-            df['SMA_200'] = df['Close'].rolling(window=200).mean()
             df['RSI'] = calculate_rsi(df['Close'])
             hist_data[t] = df
 
@@ -210,6 +199,7 @@ def process_bulk_data(tickers, sector_map, mode, period="5y"):
                 else: val = info.get('trailingPE') or info.get('forwardPE')
             except: val = np.nan
             
+            # Use 20.0 as neutral fallback, ensuring we have a float
             if pd.isna(rsi): rsi = 50.0 
             if pd.isna(vol): vol = 0.20
             if pd.isna(val) or val <= 0: val = 20.0
@@ -269,6 +259,10 @@ def run_linear_optimization(df, max_weight_per_asset, mode, sector_limits, bound
                     c_sec.SetCoefficient(weights[idx], 1)
 
     metric_col = "PEG" if "P/E/G" in mode else "PE"
+    # Ensure column exists before using it
+    if metric_col not in df.columns:
+        metric_col = "PE" if "PE" in df.columns else "PEG"
+
     if metric_col == "PEG": scores = (df['RSI'] / 100) + (1 / df['PEG']) 
     else: scores = (df['RSI'] / 100) + ((1 / df['PE']) * 50)
     
@@ -291,6 +285,10 @@ def optimize_portfolio(df, objective_type, max_weight_per_asset, mode, sector_li
     if df is None or df.empty: return pd.DataFrame()
 
     metric_col = "PEG" if "P/E/G" in mode else "PE"
+    # Fallback to ensure we don't crash if columns mismatch
+    if metric_col not in df.columns:
+        metric_col = "PE" if "PE" in df.columns else "PEG"
+
     if metric_col == "PEG": scores = (df['RSI'] / 100) + (1 / df['PEG']) 
     else: scores = (df['RSI'] / 100) + ((1 / df['PE']) * 50)
     avg_score = scores.mean()
@@ -363,7 +361,6 @@ def run_sector_rebalancer():
     live_weight = get_live_tech_weight()
     today_str = datetime.today().strftime('%m/%d/%Y')
     
-    # --- CUSTOM CENTERED INFO BOX ---
     st.markdown(f"""
         <div style="
             background-color: #e6f3ff; 
@@ -529,7 +526,14 @@ def run_stock_optimizer():
         df_res = st.session_state["opt_res"]
         df_mkt = st.session_state["mkt_data"]
         hist = st.session_state["hist_data"]
-        metric_col = "PEG" if "P/E/G" in mode_sel else "PE"
+        
+        # --- ROBUST METRIC DETECTION ---
+        # Detect which metric column (PE or PEG) is actually in the result DataFrame
+        # This prevents crashes if the UI radio button doesn't match the cached data.
+        available_cols = df_res.columns.tolist()
+        if "PEG" in available_cols: metric_col = "PEG"
+        elif "PE" in available_cols: metric_col = "PE"
+        else: metric_col = available_cols[0] # Fallback, should not happen
 
         st.divider()
         st.subheader("1. Asset Selection Matrix")
