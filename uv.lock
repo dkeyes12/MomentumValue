@@ -1,21 +1,43 @@
 # uv.lock - generated from streamlit_app.py
 # Timestamp: 2026-01-30T00:00:00Z
-# Lock file format: simple YAML-ish list of packages and pinned versions
+# Converted to TOML for reliable parsing
 
-uvlock_version: 1
-python_version: "3.12"
-generated_from: "streamlit_app.py"
-packages:
-  streamlit: "1.53.0"
-  yfinance: "1.0"
-  pandas: "2.3.3"
-  numpy: "2.4.1"
-  ortools: "9.15.6755"
-  scipy: "1.17.0"
-  plotly: "6.5.2"
-  skfolio:
-    version: "0.15.3"
-    optional: true
+uvlock_version = 1
+python_version = "3.12"
+generated_from = "streamlit_app.py"
+
+[[packages]]
+name = "streamlit"
+version = "1.53.0"
+
+[[packages]]
+name = "yfinance"
+version = "1.0"
+
+[[packages]]
+name = "pandas"
+version = "2.3.3"
+
+[[packages]]
+name = "numpy"
+version = "2.4.1"
+
+[[packages]]
+name = "ortools"
+version = "9.15.6755"
+
+[[packages]]
+name = "scipy"
+version = "1.17.0"
+
+[[packages]]
+name = "plotly"
+version = "6.5.2"
+
+[[packages]]
+name = "skfolio"
+version = "0.15.3"
+optional = true
 
 # Notes:
 # - These versions were taken from the active virtual environment in this workspace.
