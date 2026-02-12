@@ -172,7 +172,12 @@ def process_bulk_data(tickers, sector_map, mode, period="5y"):
     if not ticker_list: return None, None, None
     
     try:
+        # 1. Download Price Data (Bulk)
         bulk_data = yf.download(ticker_list, period=period, group_by='ticker', auto_adjust=False)
+        
+        # 2. Download Metadata (Optimized with Tickers object to share session)
+        # Using " ".join() allows yfinance to manage the session better than individual calls
+        tickers_obj = yf.Tickers(" ".join(ticker_list))
     except Exception:
         return None, None, None
     
@@ -193,24 +198,37 @@ def process_bulk_data(tickers, sector_map, mode, period="5y"):
             vol = df['Close'].pct_change().std() * np.sqrt(252)
             ret = (df['Close'].iloc[-1] - df['Close'].iloc[0]) / df['Close'].iloc[0]
             
+            # --- ROBUST INFO FETCH ---
             try:
-                info = yf.Ticker(t).info
-                if "P/E/G" in mode: val = info.get('pegRatio') or info.get('trailingPE')
-                else: val = info.get('trailingPE') or info.get('forwardPE')
-            except: val = np.nan
+                # Access individual ticker info from the bulk object
+                info = tickers_obj.tickers[t].info
+                
+                # Try multiple keys for redundancy
+                pe_trailing = info.get('trailingPE')
+                pe_forward = info.get('forwardPE')
+                peg = info.get('pegRatio')
+                
+                if "P/E/G" in mode:
+                    val = peg if (peg is not None and peg > 0) else pe_trailing
+                else:
+                    val = pe_trailing if (pe_trailing is not None and pe_trailing > 0) else pe_forward
+            except: 
+                val = np.nan
             
-            # Use 20.0 as neutral fallback, ensuring we have a float
+            # --- FALLBACKS ---
             if pd.isna(rsi): rsi = 50.0 
             if pd.isna(vol): vol = 0.20
+            
+            # Only use 20.0 if we truly have NO data. 
+            # If val is still None/NaN here, yfinance failed completely for this ticker.
             if pd.isna(val) or val <= 0: val = 20.0
             
-            if val > 0:
-                snapshot_data.append({
-                    "Ticker": t, "Sector": sector_map.get(t, "Unknown"),
-                    "Price": df['Close'].iloc[-1], "RSI": rsi,
-                    "Volatility": vol, "Return": ret,
-                    "PEG" if "P/E/G" in mode else "PE": val
-                })
+            snapshot_data.append({
+                "Ticker": t, "Sector": sector_map.get(t, "Unknown"),
+                "Price": df['Close'].iloc[-1], "RSI": rsi,
+                "Volatility": vol, "Return": ret,
+                "PEG" if "P/E/G" in mode else "PE": val
+            })
         except: continue
     
     final_df = pd.DataFrame(snapshot_data)
@@ -528,12 +546,10 @@ def run_stock_optimizer():
         hist = st.session_state["hist_data"]
         
         # --- ROBUST METRIC DETECTION ---
-        # Detect which metric column (PE or PEG) is actually in the result DataFrame
-        # This prevents crashes if the UI radio button doesn't match the cached data.
         available_cols = df_res.columns.tolist()
         if "PEG" in available_cols: metric_col = "PEG"
         elif "PE" in available_cols: metric_col = "PE"
-        else: metric_col = available_cols[0] # Fallback, should not happen
+        else: metric_col = available_cols[0] 
 
         st.divider()
         st.subheader("1. Asset Selection Matrix")

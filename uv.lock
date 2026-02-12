@@ -1,0 +1,23 @@
+# uv.lock - generated from streamlit_app.py
+# Timestamp: 2026-01-30T00:00:00Z
+# Lock file format: simple YAML-ish list of packages and pinned versions
+
+uvlock_version: 1
+python_version: "3.12"
+generated_from: "streamlit_app.py"
+packages:
+  streamlit: "1.53.0"
+  yfinance: "1.0"
+  pandas: "2.3.3"
+  numpy: "2.4.1"
+  ortools: "9.15.6755"
+  scipy: "1.17.0"
+  plotly: "6.5.2"
+  skfolio:
+    version: "0.15.3"
+    optional: true
+
+# Notes:
+# - These versions were taken from the active virtual environment in this workspace.
+# - This lock file lists only direct imports detected in `streamlit_app.py`.
+# - If you want hashes or transitive dependency locking, tell me and I can generate a more complete lock (e.g., pip-compile / pip-tools or `pip freeze` with hashes).
