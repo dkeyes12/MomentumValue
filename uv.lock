@@ -6,36 +6,28 @@ uvlock_version = 1
 python_version = "3.12"
 generated_from = "streamlit_app.py"
 
-[[packages]]
-name = "streamlit"
+[packages.streamlit]
 version = "1.53.0"
 
-[[packages]]
-name = "yfinance"
+[packages.yfinance]
 version = "1.0"
 
-[[packages]]
-name = "pandas"
+[packages.pandas]
 version = "2.3.3"
 
-[[packages]]
-name = "numpy"
+[packages.numpy]
 version = "2.4.1"
 
-[[packages]]
-name = "ortools"
+[packages.ortools]
 version = "9.15.6755"
 
-[[packages]]
-name = "scipy"
+[packages.scipy]
 version = "1.17.0"
 
-[[packages]]
-name = "plotly"
+[packages.plotly]
 version = "6.5.2"
 
-[[packages]]
-name = "skfolio"
+[packages.skfolio]
 version = "0.15.3"
 optional = true
 
