@@ -44,18 +44,19 @@ SECTOR_TICKER_MAP = {
     "Industrials": "XLI", "Utilities": "XLU", "Communication Services": "XLC"
 }
 
+# Added approximate live P/E and PEG values for the Sector ETFs
 DEFAULT_TICKERS = [
-    {"Ticker": "XLK", "Sector": "Information Technology"},
-    {"Ticker": "XLV", "Sector": "Health Care"},
-    {"Ticker": "XLF", "Sector": "Financials"},
-    {"Ticker": "XLRE", "Sector": "Real Estate"},
-    {"Ticker": "XLE", "Sector": "Energy"},
-    {"Ticker": "XLB", "Sector": "Materials"},
-    {"Ticker": "XLY", "Sector": "Consumer Discretionary"},
-    {"Ticker": "XLP", "Sector": "Consumer Staples"},
-    {"Ticker": "XLI", "Sector": "Industrials"},
-    {"Ticker": "XLU", "Sector": "Utilities"},
-    {"Ticker": "XLC", "Sector": "Communication Services"}
+    {"Ticker": "XLK", "Sector": "Information Technology", "PE": 35.0, "PEG": 2.0},
+    {"Ticker": "XLV", "Sector": "Health Care", "PE": 18.0, "PEG": 1.5},
+    {"Ticker": "XLF", "Sector": "Financials", "PE": 15.0, "PEG": 1.2},
+    {"Ticker": "XLRE", "Sector": "Real Estate", "PE": 35.0, "PEG": 2.5},
+    {"Ticker": "XLE", "Sector": "Energy", "PE": 10.0, "PEG": 1.0},
+    {"Ticker": "XLB", "Sector": "Materials", "PE": 16.0, "PEG": 1.5},
+    {"Ticker": "XLY", "Sector": "Consumer Discretionary", "PE": 25.0, "PEG": 1.8},
+    {"Ticker": "XLP", "Sector": "Consumer Staples", "PE": 20.0, "PEG": 2.0},
+    {"Ticker": "XLI", "Sector": "Industrials", "PE": 20.0, "PEG": 1.6},
+    {"Ticker": "XLU", "Sector": "Utilities", "PE": 17.0, "PEG": 2.0},
+    {"Ticker": "XLC", "Sector": "Communication Services", "PE": 20.0, "PEG": 1.5}
 ]
 
 # --- SAFETY INITIALIZATION ---
@@ -167,22 +168,27 @@ def plot_quadrant_chart(df_in, metric_col, rsi_col, weight_col=None, title="Asse
     return fig
 
 @st.cache_data
-def process_bulk_data(tickers, sector_map, mode, period="5y"):
-    ticker_list = [t.upper().strip() for t in tickers if t.strip()]
+def process_bulk_data(input_df, mode, period="5y"):
+    """
+    Processes market data and handles missing API valuation metrics by falling back 
+    to user-provided UI data (crucial for ETFs).
+    """
+    ticker_list = [str(t).upper().strip() for t in input_df["Ticker"] if str(t).strip()]
     if not ticker_list: return None, None, None
     
     try:
-        # 1. Download Price Data (Bulk)
         bulk_data = yf.download(ticker_list, period=period, group_by='ticker', auto_adjust=False)
-        
-        # 2. Download Metadata (Optimized with Tickers object to share session)
-        # Using " ".join() allows yfinance to manage the session better than individual calls
         tickers_obj = yf.Tickers(" ".join(ticker_list))
     except Exception:
         return None, None, None
     
     snapshot_data = []
     hist_data = {}
+    
+    # Dictionaries mapping Ticker -> User's fallback from the Data Editor
+    fallback_pe = dict(zip(input_df["Ticker"], input_df.get("PE", [20.0]*len(input_df))))
+    fallback_peg = dict(zip(input_df["Ticker"], input_df.get("PEG", [1.5]*len(input_df))))
+    sector_map = dict(zip(input_df["Ticker"], input_df["Sector"]))
 
     for t in ticker_list:
         try:
@@ -198,30 +204,24 @@ def process_bulk_data(tickers, sector_map, mode, period="5y"):
             vol = df['Close'].pct_change().std() * np.sqrt(252)
             ret = (df['Close'].iloc[-1] - df['Close'].iloc[0]) / df['Close'].iloc[0]
             
-            # --- ROBUST INFO FETCH ---
+            # --- ATTEMPT YFINANCE FETCH ---
             try:
-                # Access individual ticker info from the bulk object
                 info = tickers_obj.tickers[t].info
-                
-                # Try multiple keys for redundancy
-                pe_trailing = info.get('trailingPE')
-                pe_forward = info.get('forwardPE')
-                peg = info.get('pegRatio')
-                
-                if "P/E/G" in mode:
-                    val = peg if (peg is not None and peg > 0) else pe_trailing
-                else:
-                    val = pe_trailing if (pe_trailing is not None and pe_trailing > 0) else pe_forward
+                pe_fetched = info.get('trailingPE') or info.get('forwardPE')
+                peg_fetched = info.get('pegRatio')
             except: 
-                val = np.nan
+                pe_fetched = None
+                peg_fetched = None
+                
+            # --- FALLBACK LOGIC ---
+            # If yfinance returns missing or 0, use the fallback value provided in the UI table
+            resolved_pe = pe_fetched if (pe_fetched is not None and pe_fetched > 0) else fallback_pe.get(t, 20.0)
+            resolved_peg = peg_fetched if (peg_fetched is not None and peg_fetched > 0) else fallback_peg.get(t, 1.5)
             
-            # --- FALLBACKS ---
             if pd.isna(rsi): rsi = 50.0 
             if pd.isna(vol): vol = 0.20
             
-            # Only use 20.0 if we truly have NO data. 
-            # If val is still None/NaN here, yfinance failed completely for this ticker.
-            if pd.isna(val) or val <= 0: val = 20.0
+            val = resolved_peg if "P/E/G" in mode else resolved_pe
             
             snapshot_data.append({
                 "Ticker": t, "Sector": sector_map.get(t, "Unknown"),
@@ -277,7 +277,6 @@ def run_linear_optimization(df, max_weight_per_asset, mode, sector_limits, bound
                     c_sec.SetCoefficient(weights[idx], 1)
 
     metric_col = "PEG" if "P/E/G" in mode else "PE"
-    # Ensure column exists before using it
     if metric_col not in df.columns:
         metric_col = "PE" if "PE" in df.columns else "PEG"
 
@@ -303,7 +302,6 @@ def optimize_portfolio(df, objective_type, max_weight_per_asset, mode, sector_li
     if df is None or df.empty: return pd.DataFrame()
 
     metric_col = "PEG" if "P/E/G" in mode else "PE"
-    # Fallback to ensure we don't crash if columns mismatch
     if metric_col not in df.columns:
         metric_col = "PE" if "PE" in df.columns else "PEG"
 
@@ -493,6 +491,10 @@ def run_stock_optimizer():
         
         display_df = st.session_state["user_tickers"].copy()
         
+        # Ensure new columns exist if loading from old state
+        if "PE" not in display_df.columns: display_df["PE"] = 20.0
+        if "PEG" not in display_df.columns: display_df["PEG"] = 1.5
+        
         if use_sector_limits and "sector_targets" in st.session_state:
             targets = st.session_state["sector_targets"]
             display_df["Macro Cap"] = display_df["Sector"].map(targets).fillna(0.0) * 100
@@ -501,14 +503,12 @@ def run_stock_optimizer():
         column_cfg = {
             "Ticker": st.column_config.TextColumn("Ticker", width="small"),
             "Sector": st.column_config.TextColumn("Sector", width="medium"),
-            "Macro Cap": st.column_config.NumberColumn(
-                "Macro Cap", 
-                format="%.0f%%", 
-                disabled=True
-            )
+            "PE": st.column_config.NumberColumn("PE (Fallback)", format="%.1f"),
+            "PEG": st.column_config.NumberColumn("PEG (Fallback)", format="%.2f"),
+            "Macro Cap": st.column_config.NumberColumn("Macro Cap", format="%.0f%%", disabled=True)
         }
         
-        st.caption("Edit Tickers Below:")
+        st.caption("Edit Tickers Below (Valuation falls back to this table if Yahoo Finance API fails):")
         edited = st.data_editor(
             display_df, 
             column_config=column_cfg,
@@ -522,9 +522,8 @@ def run_stock_optimizer():
                 del st.session_state["opt_res"]
                 
             with st.spinner("Fetching data..."):
-                t_list = edited["Ticker"].tolist()
-                s_map = dict(zip(edited["Ticker"], edited["Sector"]))
-                df_mkt, hist, cov = process_bulk_data(t_list, s_map, mode_sel)
+                # Pass the ENTIRE edited dataframe so we can use the PE/PEG fallbacks
+                df_mkt, hist, cov = process_bulk_data(edited, mode_sel)
                 
                 if df_mkt is not None:
                     df_mkt = df_mkt.copy()
@@ -545,7 +544,6 @@ def run_stock_optimizer():
         df_mkt = st.session_state["mkt_data"]
         hist = st.session_state["hist_data"]
         
-        # --- ROBUST METRIC DETECTION ---
         available_cols = df_res.columns.tolist()
         if "PEG" in available_cols: metric_col = "PEG"
         elif "PE" in available_cols: metric_col = "PE"
